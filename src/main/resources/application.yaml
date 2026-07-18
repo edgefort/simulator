@@ -1,9 +1,9 @@
+server:
+  port: ${SERVER_PORT:8080}
+
 spring:
   application:
     name: simulator
-  docker:
-    compose:
-      enabled: false
 
 springdoc:
   swagger-ui:
@@ -14,7 +14,7 @@ springdoc:
 
 simulator:
   default-profile: happy-path
-  admin-token: ${SIMULATOR_ADMIN_TOKEN:local-admin}
+  admin-token: ${SIMULATOR_ADMIN_TOKEN:simulator}
   interswitch-transfer:
     client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
     client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
