@@ -23,6 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.xpath;
 
 @SpringBootTest(properties = {
+        "simulator.admin-token=local-admin",
         "simulator.profiles.pending.transition-delay=20ms",
         "simulator.profiles.late-event.transition-delay=80ms",
         "simulator.profiles.timeout.delay=5ms"
