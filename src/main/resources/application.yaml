@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: simulator
+  docker:
+    compose:
+      enabled: false
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    try-it-out-enabled: true
+    operations-sorter: method
+    display-request-duration: true
+
+simulator:
+  default-profile: happy-path
+  admin-token: ${SIMULATOR_ADMIN_TOKEN:local-admin}
+  interswitch-transfer:
+    client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
+    client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
+    access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
+    token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
+    terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
+  allowed-callback-hosts:
+    - localhost
+    - 127.0.0.1
+  limits:
+    max-transactions: 1000
+    max-overrides: 100
+    max-held-requests: 20
+    scheduler-threads: 2
+    transaction-ttl: 15m
+    override-ttl: 5m
+    max-delay: 30s
+  profiles:
+    happy-path:
+      scenario: success
+      delay: 0ms
+      transition-delay: 100ms
+    failure:
+      scenario: failure
+      delay: 0ms
+      transition-delay: 100ms
+    pending:
+      scenario: pending
+      delay: 0ms
+      transition-delay: 1s
+    delayed-success:
+      scenario: delayed-success
+      delay: 250ms
+      transition-delay: 100ms
+    timeout:
+      scenario: timeout
+      delay: 5s
+      transition-delay: 100ms
+    event-timeout:
+      scenario: event-timeout
+      delay: 0ms
+      transition-delay: 1s
+    late-event:
+      scenario: late-event
+      delay: 0ms
+      transition-delay: 5s
+  providers:
+    nibss-nip:
+      enabled: true
+      specification-version: NIP v9.4
+      security-mode: not-configured-wsdl-security-not-supplied
+    interswitch-transfer:
+      enabled: true
+      specification-version: Quickteller Service API v5 public documentation
+      security-mode: oauth-client-credentials-and-bearer
