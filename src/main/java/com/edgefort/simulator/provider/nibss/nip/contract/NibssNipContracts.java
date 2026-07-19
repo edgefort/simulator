@@ -1,11 +1,11 @@
 package com.edgefort.simulator.provider.nibss.nip.contract;
 
+import com.fasterxml.jackson.annotation.JsonRootName;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import tools.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import tools.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 
 import java.math.BigDecimal;
 
@@ -14,7 +14,7 @@ public final class NibssNipContracts {
     private NibssNipContracts() {
     }
 
-    @JacksonXmlRootElement(localName = "NESingleRequest")
+    @JsonRootName("NESingleRequest")
     public record NameEnquiryRequest(
             @NotBlank @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @NotBlank @JacksonXmlProperty(localName = "DestinationInstitutionCode") String destinationInstitutionCode,
@@ -23,7 +23,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "NESingleResponse")
+    @JsonRootName("NESingleResponse")
     public record NameEnquiryResponse(
             @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @JacksonXmlProperty(localName = "DestinationInstitutionCode") String destinationInstitutionCode,
@@ -36,7 +36,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTSingleCreditRequest")
+    @JsonRootName("FTSingleCreditRequest")
     public record CreditTransferRequest(
             @NotBlank @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @NotBlank @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -57,7 +57,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTSingleCreditResponse")
+    @JsonRootName("FTSingleCreditResponse")
     public record CreditTransferResponse(
             @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -79,7 +79,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTSingleDebitRequest")
+    @JsonRootName("FTSingleDebitRequest")
     public record DebitTransferRequest(
             @NotBlank @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @NotBlank @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -102,7 +102,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTSingleDebitResponse")
+    @JsonRootName("FTSingleDebitResponse")
     public record DebitTransferResponse(
             @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -126,7 +126,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "TSQuerySingleRequest")
+    @JsonRootName("TSQuerySingleRequest")
     public record TransactionStatusQueryRequest(
             @NotBlank @JacksonXmlProperty(localName = "SourceInstitutionCode") String sourceInstitutionCode,
             @NotBlank @JacksonXmlProperty(localName = "ChannelCode") String channelCode,
@@ -134,7 +134,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "TSQuerySingleResponse")
+    @JsonRootName("TSQuerySingleResponse")
     public record TransactionStatusQueryResponse(
             @JacksonXmlProperty(localName = "SourceInstitutionCode") String sourceInstitutionCode,
             @JacksonXmlProperty(localName = "ChannelCode") String channelCode,
@@ -143,7 +143,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "BalanceEnquiryRequest")
+    @JsonRootName("BalanceEnquiryRequest")
     public record BalanceEnquiryRequest(
             @NotBlank @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @NotBlank @JacksonXmlProperty(localName = "DestinationInstitutionCode") String destinationInstitutionCode,
@@ -155,7 +155,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "BalanceEnquiryResponse")
+    @JsonRootName("BalanceEnquiryResponse")
     public record BalanceEnquiryResponse(
             @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @JacksonXmlProperty(localName = "DestinationInstitutionCode") String destinationInstitutionCode,
@@ -169,7 +169,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTAdviceCreditRequest")
+    @JsonRootName("FTAdviceCreditRequest")
     public record CreditAdviceRequest(
             @NotBlank @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @NotBlank @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -190,7 +190,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTAdviceCreditResponse")
+    @JsonRootName("FTAdviceCreditResponse")
     public record CreditAdviceResponse(
             @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -212,7 +212,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTAdviceDebitRequest")
+    @JsonRootName("FTAdviceDebitRequest")
     public record DebitAdviceRequest(
             @NotBlank @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @NotBlank @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,
@@ -235,7 +235,7 @@ public final class NibssNipContracts {
     ) {
     }
 
-    @JacksonXmlRootElement(localName = "FTAdviceDebitResponse")
+    @JsonRootName("FTAdviceDebitResponse")
     public record DebitAdviceResponse(
             @JacksonXmlProperty(localName = "SessionID") String sessionId,
             @JacksonXmlProperty(localName = "NameEnquiryRef") String nameEnquiryRef,

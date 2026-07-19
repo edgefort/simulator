@@ -10,6 +10,8 @@ The application owns scenario selection, bounded in-memory transaction state, de
 |---|---|---|---|
 | NIBSS NIP | `nibss-nip` | NIP v9.4 XML messages 010 through 023 | XML over local HTTP; institution-specific WSDL and message security are not simulated because they were not supplied |
 | Interswitch | `interswitch-transfer` | Quickteller Service Send Money v5 authentication, account-name enquiry, bank listing, transfer, and transaction query | JSON, OAuth client credentials, bearer authorization, `TerminalId`, and secure-data v12 `SHA-512` MAC validation |
+| Interswitch | `interswitch-bill-payment` | Quickteller Service v5 biller discovery, customer validation, bills payment, airtime recharge, and transaction query | JSON; shares Interswitch OAuth client credentials, bearer authorization, and `TerminalId` with Send Money |
+| Onafriq | `onafriq-bill-payment` | Biller Aggregation Platform API v1.0.0 bill-payment discovery, validation, purchase, balance, query, and requery operations | JSON and either `x-api-key` or `Authorization: Api-key`; HMAC authentication is not simulated |
 
 Use `GET /admin/providers` to obtain the enabled status, specification version, and security mode configured for each provider at runtime. The provider IDs in this table are also used by transaction inspection and one-time admin overrides.
 
@@ -20,6 +22,10 @@ The NIBSS module implements the complete request/response XML pairs present in t
 This is not a claim of NIBSS certification. The supplied material does not include the institution-specific WSDL, service binding, endpoint address, or complete message-security specification, and it ends partway through message 025. The simulator therefore exposes the documented XML messages through local HTTP routes without inventing the missing SOAP binding or security rules.
 
 The Interswitch module follows the public Quickteller Service Send Money v5 documentation reviewed on 18 July 2026. It implements the published OAuth client-credentials flow, bearer authorization, `TerminalId` and operation headers, transfer body casing, secure-data version 12 `SHA-512` MAC, response fields, and five-digit response codes. The public documentation contains contradictions and incomplete examples, so this implementation is not a claim of partner certification. See `INTERSWITCH_SEND_MONEY_V5.md` for the reviewed sources and exact limitations.
+
+The Interswitch bill-payment module follows the public Quickteller Bills Payment and Airtime & Data v5 guides reviewed on 18 July 2026. It shares the OAuth and `TerminalId` security surface, implements category/biller/payment-item discovery, customer validation, utility payment, MTN/9mobile/Glo airtime recharge, and query, and applies the documented ₦50–₦10,000 regular-airtime range. See `INTERSWITCH_BILLS_PAYMENT_V5.md` for deterministic product identifiers, response codes, source contradictions, and scope limitations.
+
+The Onafriq module follows the public B2B VAS Biller Aggregation Platform documentation reviewed on 18 July 2026. It implements the published `/services` bill-payment subset: biller discovery, balances, airtime, data, cable TV, electricity, e-pin/JAMB, betting, vehicle insurance, account lookup, transaction query, and requery. Fund transfer and international/remittance operations published in the same project are outside this bill-payment module. See `ONAFRIQ_BILL_PAYMENT_V1.md` for the route matrix, examples, source precedence, and limitations.
 
 Before integrating a real consumer, confirm each provider module against the specification and credentials assigned to that consumer:
 
@@ -90,6 +96,35 @@ After default-port startup, open [Swagger UI](http://localhost:8080/swagger-ui.h
 
 Runtime configuration can be supplied with `--env`, an environment file through `--env-file`, or the equivalent environment settings in the container platform:
 
+Provider configuration is grouped by provider ID in `application.yaml`. Shared metadata and provider-specific settings are colocated under `simulator.providers.<provider-id>`, with typed settings nested under `config`:
+
+```yaml
+simulator:
+  providers:
+    interswitch-transfer:
+      enabled: true
+      specification-version: Quickteller Service API v5 public documentation
+      security-mode: oauth-client-credentials-and-bearer
+      config:
+        client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
+        client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
+        access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
+        token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
+        terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
+    interswitch-bill-payment:
+      enabled: true
+      specification-version: Quickteller Bills Payment and Airtime API v5 public documentation
+      security-mode: shared-oauth-client-credentials-and-bearer
+    onafriq-bill-payment:
+      enabled: true
+      specification-version: Biller Aggregation Platform API v1.0.0 public documentation
+      security-mode: api-key
+      config:
+        api-key: ${ONAFRIQ_API_KEY:simulator-api-key}
+```
+
+When adding a provider, add one entry at `simulator.providers.<provider-id>` and bind its module-specific properties class to `simulator.providers.<provider-id>.config`. A provider without custom settings can omit `config`. Keep secrets in environment variables rather than committing deployment values.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `SERVER_PORT` | `8080` | HTTP port used by the service inside the container |
@@ -99,6 +134,7 @@ Runtime configuration can be supplied with `--env`, an environment file through 
 | `INTERSWITCH_ACCESS_TOKEN` | `simulator-access-token` | Bearer token returned and accepted by the simulated Interswitch API |
 | `INTERSWITCH_TOKEN_EXPIRES_IN` | `86400` | Simulated OAuth token lifetime in seconds |
 | `INTERSWITCH_TERMINAL_ID` | `3PBL0001` | Terminal ID required by the simulated Interswitch API |
+| `ONAFRIQ_API_KEY` | `simulator-api-key` | API key accepted in `x-api-key` or `Authorization: Api-key` by Onafriq operations |
 | `JAVA_TOOL_OPTIONS` | JVM default | Optional JVM options such as memory limits |
 
 For example, place non-public local values in `~/.config/simulator/simulator.env`, outside the repository and image build context:
@@ -109,6 +145,7 @@ INTERSWITCH_CLIENT_ID=test-client
 INTERSWITCH_CLIENT_SECRET=test-secret
 INTERSWITCH_ACCESS_TOKEN=test-access-token
 INTERSWITCH_TERMINAL_ID=3PBL0001
+ONAFRIQ_API_KEY=test-onafriq-api-key
 JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75
 ```
 
@@ -164,6 +201,8 @@ Swagger UI enables **Try it out** by default. To call an administration operatio
 
 For Interswitch, first invoke `POST /passport/oauth/token` with HTTP Basic credentials and `grant_type=client_credentials`. Then select **Authorize**, enter the returned token in `InterswitchBearerToken`, and invoke the v5 operation. Enter only the token in Swagger; Swagger adds the `Bearer` prefix.
 
+For Onafriq, select **Authorize** and enter the configured API key in `OnafriqApiKey`. Swagger sends it as `x-api-key`. The default local key is `simulator-api-key`; set `ONAFRIQ_API_KEY` to replace it.
+
 Run all tests:
 
 ```shell
@@ -185,7 +224,21 @@ Run all tests:
 | Interswitch | Account-name enquiry | `GET /quicktellerservice/api/v5/transactions/DoAccountNameInquiry` |
 | Interswitch | Fund-transfer banks | `GET /quicktellerservice/api/v5/configuration/fundstransferbanks` |
 | Interswitch | Transfer | `POST /quicktellerservice/api/v5/transactions/Transfer` |
+| Interswitch bills | Categories and billers | `GET /quicktellerservice/api/v5/services/categories`, `GET /quicktellerservice/api/v5/services?categoryId={id}` |
+| Interswitch bills | Payment items and customer validation | `GET /quicktellerservice/api/v5/services/options?serviceid={id}`, `POST /quicktellerservice/api/v5/Transactions/validatecustomers` |
+| Interswitch bills | Bill payment and airtime recharge | `POST /quicktellerservice/api/v5/Transactions` |
 | Interswitch | Transaction query | `GET /quicktellerservice/api/v5/Transactions?requestRef={reference}` |
+| Onafriq | Main/commission balance | `GET /services/superagent/balance`, `GET /services/superagent/commission-balance` |
+| Onafriq | Transaction lookup/requery | `GET /services/superagent/transaction`, `GET /services/superagent/transaction/requery` |
+| Onafriq | Biller discovery | `GET /services/billers/providers/all`, `GET /services/billers/category/all`, `GET /services/billers/services/category/{category}`, `GET /services/billers/services/provider/{provider}` |
+| Onafriq | Airtime | `GET /services/airtime/providers`, `POST /services/airtime/request` |
+| Onafriq | Data | `GET /services/data/providers`, `POST /services/data/bundles`, `POST /services/data/request` |
+| Onafriq | Cable TV | `GET /services/cabletv/providers`, `POST /services/cabletv/check-addons`, `POST /services/cabletv/request` |
+| Onafriq | Electricity | `GET /services/electricity/providers`, `POST /services/electricity/verify`, `POST /services/electricity/request` |
+| Onafriq | E-pin and JAMB | `GET /services/epin/providers`, `POST /services/epin/bundles`, `POST /services/epin/request`, `GET /services/epin/jamb-profiles`, `POST /services/epin/jamb-request` |
+| Onafriq | Betting | `GET /services/betting/providers`, `POST /services/betting/verify`, `POST /services/betting/request` |
+| Onafriq | Account finder | `POST /services/namefinder/query` |
+| Onafriq | Vehicle insurance | `GET /services/vehicle-insurance/providers`, `POST /services/vehicle-insurance/request` |
 
 Example NIBSS transfer:
 
@@ -261,6 +314,48 @@ curl --request POST http://localhost:8080/quicktellerservice/api/v5/transactions
   }'
 ```
 
+Example Interswitch MTN airtime recharge. Amounts are in kobo and the body `TerminalId` must match the header:
+
+```shell
+curl --request POST http://localhost:8080/quicktellerservice/api/v5/Transactions \
+  --header 'Authorization: Bearer simulator-access-token' \
+  --header 'TerminalId: 3PBL0001' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "TerminalId": "3PBL0001",
+    "paymentCode": "628051043",
+    "customerId": "234805673157",
+    "customerMobile": "234805673157",
+    "customerEmail": "customer@example.com",
+    "amount": "50000",
+    "requestReference": "airtime-local-001"
+  }'
+```
+
+Example Onafriq airtime purchase using the default local API key:
+
+```shell
+curl --request POST http://localhost:8080/services/airtime/request \
+  --header 'x-api-key: simulator-api-key' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "service_type": "mtn",
+    "plan": "prepaid",
+    "amount": 100,
+    "phone": "07034953306",
+    "agentId": "205",
+    "agentReference": "onafriq-airtime-100"
+  }'
+```
+
+Requery the same purchase with:
+
+```shell
+curl --get http://localhost:8080/services/superagent/transaction/requery \
+  --header 'x-api-key: simulator-api-key' \
+  --data-urlencode 'agentReference=onafriq-airtime-100'
+```
+
 ## Scenarios
 
 Use `X-Simulation-Scenario` on a provider request to select a behavior for that request. If omitted, the currently active profile is used; the startup profile is `happy-path`, whose scenario is `success`. Swagger UI presents the supported values as a dropdown and preselects `success`.
@@ -319,7 +414,7 @@ curl --request POST http://localhost:8080/admin/overrides \
   }'
 ```
 
-Use `nibss-nip` or `interswitch-transfer` as the provider value. The transaction reference is the NIBSS `SessionID` or the Interswitch transfer reference used by the simulated operation.
+Use `nibss-nip`, `interswitch-transfer`, or `interswitch-bill-payment` as the provider value. The transaction reference is the NIBSS `SessionID` or the Interswitch request reference used by the simulated operation.
 
 Scenario selection precedence is: one-time admin override, `X-Simulation-Scenario`, then the active profile. An override is consumed once and expires from bounded memory if it is not used. Profiles remain active until changed or the application restarts; all transaction and override state is intentionally ephemeral.
 

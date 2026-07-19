@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 @Validated
-@ConfigurationProperties("simulator.interswitch-transfer")
+@ConfigurationProperties("simulator.providers.interswitch-transfer.config")
 public class InterswitchTransferProperties {
 
     @NotBlank

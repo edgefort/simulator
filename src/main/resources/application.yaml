@@ -1,5 +1,5 @@
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:50001}
 
 spring:
   application:
@@ -15,12 +15,6 @@ springdoc:
 simulator:
   default-profile: happy-path
   admin-token: ${SIMULATOR_ADMIN_TOKEN:simulator}
-  interswitch-transfer:
-    client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
-    client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
-    access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
-    token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
-    terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
   allowed-callback-hosts:
     - localhost
     - 127.0.0.1
@@ -70,3 +64,19 @@ simulator:
       enabled: true
       specification-version: Quickteller Service API v5 public documentation
       security-mode: oauth-client-credentials-and-bearer
+      config:
+        client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
+        client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
+        access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
+        token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
+        terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
+    interswitch-bill-payment:
+      enabled: true
+      specification-version: Quickteller Bills Payment and Airtime API v5 public documentation
+      security-mode: shared-oauth-client-credentials-and-bearer
+    onafriq-bill-payment:
+      enabled: true
+      specification-version: Biller Aggregation Platform API v1.0.0 public documentation
+      security-mode: api-key
+      config:
+        api-key: ${ONAFRIQ_API_KEY:simulator-api-key}

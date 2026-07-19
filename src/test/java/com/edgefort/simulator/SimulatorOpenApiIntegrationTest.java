@@ -47,6 +47,23 @@ class SimulatorOpenApiIntegrationTest {
                 .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/configuration/fundstransferbanks']").exists())
                 .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/transactions/Transfer']").exists())
                 .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/Transactions']").exists())
+                .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/services/categories']").exists())
+                .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/services']").exists())
+                .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/services/options']").exists())
+                .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/Transactions/validatecustomers']").exists())
+                .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/Transactions'].post.parameters[1].name")
+                        .value("X-Simulation-Scenario"))
+                .andExpect(jsonPath("$.paths['/quicktellerservice/api/v5/Transactions'].post.security[0].InterswitchBearerToken")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/services/billers/category/all']").exists())
+                .andExpect(jsonPath("$.paths['/services/airtime/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/data/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/cabletv/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/electricity/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/epin/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/betting/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/vehicle-insurance/request']").exists())
+                .andExpect(jsonPath("$.paths['/services/superagent/transaction/requery']").exists())
                 .andExpect(jsonPath("$.paths['/nip/v9.4/fundtransfersingleitem_dc'].post.parameters[0].name")
                         .value("X-Simulation-Scenario"))
                 .andExpect(jsonPath("$.paths['/nip/v9.4/fundtransfersingleitem_dc'].post.parameters[0].schema.default")
@@ -59,7 +76,9 @@ class SimulatorOpenApiIntegrationTest {
                 .andExpect(jsonPath("$.components.securitySchemes.AdminToken.type").value("apiKey"))
                 .andExpect(jsonPath("$.components.securitySchemes.AdminToken.name").value("X-Admin-Token"))
                 .andExpect(jsonPath("$.components.securitySchemes.InterswitchBearerToken.type").value("http"))
-                .andExpect(jsonPath("$.components.securitySchemes.InterswitchBearerToken.scheme").value("bearer"));
+                .andExpect(jsonPath("$.components.securitySchemes.InterswitchBearerToken.scheme").value("bearer"))
+                .andExpect(jsonPath("$.components.securitySchemes.OnafriqApiKey.type").value("apiKey"))
+                .andExpect(jsonPath("$.components.securitySchemes.OnafriqApiKey.name").value("x-api-key"));
     }
 
     @Test

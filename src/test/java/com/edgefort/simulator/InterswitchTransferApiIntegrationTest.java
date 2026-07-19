@@ -19,13 +19,19 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "simulator.providers.interswitch-transfer.config.client-id=grouped-client",
+        "simulator.providers.interswitch-transfer.config.client-secret=grouped-secret",
+        "simulator.providers.interswitch-transfer.config.access-token=grouped-access-token",
+        "simulator.providers.interswitch-transfer.config.token-expires-in=43200",
+        "simulator.providers.interswitch-transfer.config.terminal-id=GROUP001"
+})
 @AutoConfigureMockMvc
 class InterswitchTransferApiIntegrationTest {
 
-    private static final String CLIENT_ID = "simulator-client";
-    private static final String CLIENT_SECRET = "simulator-secret";
-    private static final String TERMINAL_ID = "3PBL0001";
+    private static final String CLIENT_ID = "grouped-client";
+    private static final String CLIENT_SECRET = "grouped-secret";
+    private static final String TERMINAL_ID = "GROUP001";
 
     @Autowired
     private MockMvc mockMvc;
@@ -38,9 +44,9 @@ class InterswitchTransferApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .param("grant_type", "client_credentials"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.access_token").isString())
+                .andExpect(jsonPath("$.access_token").value("grouped-access-token"))
                 .andExpect(jsonPath("$.token_type").value("bearer"))
-                .andExpect(jsonPath("$.expires_in").isNumber());
+                .andExpect(jsonPath("$.expires_in").value(43200));
 
         mockMvc.perform(post("/passport/oauth/token")
                         .header(HttpHeaders.AUTHORIZATION, basicCredentials(CLIENT_ID, "wrong-secret"))

@@ -1,5 +1,6 @@
 package com.edgefort.simulator.provider.interswitch.transfer.api;
 
+import com.edgefort.simulator.provider.interswitch.billpayment.application.InterswitchBillPaymentSimulationAdapter;
 import com.edgefort.simulator.provider.interswitch.transfer.application.InterswitchTransferSimulationAdapter;
 import com.edgefort.simulator.provider.interswitch.transfer.contract.InterswitchTransferContracts.FundTransferBank;
 import com.edgefort.simulator.provider.interswitch.transfer.contract.InterswitchTransferContracts.NameEnquiryResponse;
@@ -38,9 +39,14 @@ public class InterswitchTransferController {
     );
 
     private final InterswitchTransferSimulationAdapter adapter;
+    private final InterswitchBillPaymentSimulationAdapter billPaymentAdapter;
 
-    public InterswitchTransferController(InterswitchTransferSimulationAdapter adapter) {
+    public InterswitchTransferController(
+            InterswitchTransferSimulationAdapter adapter,
+            InterswitchBillPaymentSimulationAdapter billPaymentAdapter
+    ) {
         this.adapter = adapter;
+        this.billPaymentAdapter = billPaymentAdapter;
     }
 
     @GetMapping("/transactions/DoAccountNameInquiry")
@@ -94,12 +100,16 @@ public class InterswitchTransferController {
     }
 
     @GetMapping("/Transactions")
-    ResponseEntity<TransferResponse> requery(
+    ResponseEntity<?> requery(
             @RequestHeader("TerminalId") String terminalId,
             @RequestParam("requestRef") String requestReference
     ) {
+        var billPaymentResponse = billPaymentAdapter.query(requestReference);
+        if (billPaymentResponse.isPresent()) {
+            return ResponseEntity.ok(billPaymentResponse.get());
+        }
         return adapter.requery(requestReference)
-                .map(ResponseEntity::ok)
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

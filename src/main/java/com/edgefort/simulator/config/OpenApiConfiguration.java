@@ -30,5 +30,12 @@ import org.springframework.context.annotation.Configuration;
         type = SecuritySchemeType.HTTP,
         scheme = "bearer"
 )
+@SecurityScheme(
+        name = "OnafriqApiKey",
+        description = "Onafriq Biller Aggregation Platform API key",
+        type = SecuritySchemeType.APIKEY,
+        in = SecuritySchemeIn.HEADER,
+        paramName = "x-api-key"
+)
 public class OpenApiConfiguration {
 }
