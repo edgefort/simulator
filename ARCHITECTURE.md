@@ -6,6 +6,7 @@ This application is intended to simulate many external payment providers from on
 
 - NIBSS NIP
 - Interswitch Transfer
+- Onafriq Bill Payment
 
 The simulator should reproduce each provider's public contract closely enough that a consuming application can use the simulator in local development, automated integration tests, demonstrations, and controlled failure testing.
 
@@ -27,7 +28,7 @@ Starting with microservices would add service discovery, ports, deployment manif
 
 ### Core design rule
 
-Provider wire contracts belong to provider modules. Shared infrastructure must not contain NIBSS or Interswitch request fields, response codes, signatures, or endpoint assumptions.
+Provider wire contracts belong to provider modules. Shared infrastructure must not contain NIBSS, Interswitch, or Onafriq request fields, response codes, signatures, or endpoint assumptions.
 
 Each provider module owns:
 
@@ -54,7 +55,8 @@ Prefer deterministic behavior derived from the request reference, configured pro
 ```text
                          +---------------------------+
 Client application ---->| Provider-specific API     |
-                         | NIBSS / Interswitch       |
+                         | NIBSS / Interswitch /     |
+                         | Onafriq                   |
                          +-------------+-------------+
                                        |
                          validate and translate
@@ -83,6 +85,7 @@ Expose separate provider namespaces rather than a generic endpoint with a `provi
 ```text
 /nip/v9.4/...
 /quicktellerservice/api/v5/...
+/services/...
 ```
 
 These paths are illustrative. Exact paths, headers, media types, and status behavior must be copied from the version of each provider specification used by the consuming system. If the consuming system requires the provider's exact root path, use host-based routing or configurable base paths at deployment time instead of changing the internal design.
@@ -319,7 +322,7 @@ Provider specifications can be versioned, restricted, or changed. Record the sim
 
 ## 6. Configuration model
 
-Use typed Spring configuration properties and keep secrets outside source control. A possible shape is:
+Use typed Spring configuration properties and keep secrets outside source control. Keep every provider's metadata and provider-specific settings together under `simulator.providers.<provider-id>`. The shared metadata remains consistent across providers, while each provider owns the schema inside its `config` section:
 
 ```yaml
 simulator:
@@ -328,15 +331,27 @@ simulator:
   providers:
     nibss-nip:
       enabled: true
-      base-path: /nip/v9.4
       specification-version: "NIP v9.4"
       security-mode: not-configured-wsdl-security-not-supplied
     interswitch-transfer:
       enabled: true
-      base-path: /simulators/interswitch/transfer
-      specification-version: "configured-version"
-      security-mode: relaxed
+      specification-version: "Quickteller Service API v5 public documentation"
+      security-mode: oauth-client-credentials-and-bearer
+      config:
+        client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
+        client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
+        access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
+        token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
+        terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
+    onafriq-bill-payment:
+      enabled: true
+      specification-version: "Biller Aggregation Platform API v1.0.0 public documentation"
+      security-mode: api-key
+      config:
+        api-key: ${ONAFRIQ_API_KEY:simulator-api-key}
 ```
+
+Each provider module binds a dedicated validated properties class to `simulator.providers.<provider-id>.config`; it must not add another provider-specific section directly under `simulator`. Adding a provider therefore means adding one provider entry, its typed `config` binder, and environment-variable placeholders for credentials or deployment-specific values. Providers with no specific settings, such as the current NIBSS NIP module, omit `config`.
 
 Recommended security modes are:
 

@@ -183,10 +183,14 @@ class ProviderApiIntegrationTest {
         mockMvc.perform(get("/admin/providers")
                         .header("X-Admin-Token", "local-admin"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[?(@.id == 'nibss-nip')].specificationVersion").value("NIP v9.4"))
                 .andExpect(jsonPath("$[?(@.id == 'interswitch-transfer')].specificationVersion")
-                        .value("Quickteller Service API v5 public documentation"));
+                        .value("Quickteller Service API v5 public documentation"))
+                .andExpect(jsonPath("$[?(@.id == 'interswitch-bill-payment')].specificationVersion")
+                        .value("Quickteller Bills Payment and Airtime API v5 public documentation"))
+                .andExpect(jsonPath("$[?(@.id == 'onafriq-bill-payment')].specificationVersion")
+                        .value("Biller Aggregation Platform API v1.0.0 public documentation"));
     }
 
     @Test
