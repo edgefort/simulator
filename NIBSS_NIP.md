@@ -111,8 +111,8 @@ Derived from `SSMLib` in `SSecurityModule.jar`:
 
 | Key | Source |
 |---|---|
-| Simulator key pair (plays NIBSS) | Generated on every startup (RSA-2048 primary key with an RSA-2048 encryption subkey, user ID `NIBSS NIP Simulator`). To keep it across restarts, set `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` (Base64 of an armored or binary secret key ring) and `NIBSS_NIP_SIMULATOR_PRIVATE_KEY_PASSPHRASE`. |
-| Institution public key | `NIBSS_NIP_CLIENT_PUBLIC_KEY` (Base64 of an armored or binary public key ring) and/or the admin upload below; the latest upload wins until restart. |
+| Simulator key pair (plays NIBSS) | **Built-in test key pair** (`src/main/resources/nibss-nip/simulator-test-secret-key.asc`), identical on every start, machine, and release: RSA-2048 primary key with an RSA-2048 encryption subkey, user ID `NIBSS NIP Simulator TEST KEY - NOT FOR PRODUCTION`, fingerprint `86114BA1ABFFCA5D322DCCE909AC730FDC684398`. Institutions can download its public key once and keep it in their test configuration. Its private key is public by design: never use it to protect real traffic. To use a different key (for example a shared staging environment), set `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` (Base64 of an armored or binary secret key ring) and `NIBSS_NIP_SIMULATOR_PRIVATE_KEY_PASSPHRASE`. |
+| Institution public key | `NIBSS_NIP_CLIENT_PUBLIC_KEY` (Base64 of an armored or binary public key ring) and/or the admin upload below; the latest upload wins until restart. Set the environment variable to avoid uploading after every restart. |
 
 Invalid configured keys fail startup. Key material is never logged; the startup log shows fingerprints only.
 

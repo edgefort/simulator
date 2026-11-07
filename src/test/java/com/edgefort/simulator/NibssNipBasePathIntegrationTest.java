@@ -3,6 +3,7 @@ package com.edgefort.simulator;
 import com.edgefort.simulator.provider.nibss.nip.security.PgpKeys;
 import com.edgefort.simulator.provider.nibss.nip.security.PgpSecretKeys;
 import com.edgefort.simulator.support.NipSoapMessages;
+import com.edgefort.simulator.support.PgpTestKeys;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -75,7 +76,7 @@ class NibssNipBasePathIntegrationTest {
 
     @Test
     void mountsTheSoapServiceAndItsWsdlUnderTheBasePath() throws Exception {
-        PgpSecretKeys institutionKeys = PgpSecretKeys.generate("Base Path Institution");
+        PgpSecretKeys institutionKeys = PgpTestKeys.generate("Base Path Institution");
         mockMvc.perform(put("/admin/providers/nibss-nip/keys/client-public")
                         .header("X-Admin-Token", ADMIN_TOKEN)
                         .contentType(MediaType.APPLICATION_OCTET_STREAM)

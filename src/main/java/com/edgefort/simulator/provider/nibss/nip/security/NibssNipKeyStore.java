@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -14,15 +16,16 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * The simulator's own SSM key pair (it plays NIBSS) and the connected institution's public key.
  *
- * <p>The simulator key pair comes from {@code config.simulator-private-key} when set, otherwise a fresh RSA-2048 key
- * pair is generated at startup; institutions then download the public key through the admin API. The institution's
- * public key comes from {@code config.client-public-key} and can be replaced through the admin API. Key material is
- * never logged.</p>
+ * <p>The simulator key pair comes from {@code config.simulator-private-key} when set. Otherwise the built-in test key
+ * pair bundled at {@value #BUILT_IN_KEY_RESOURCE} is used, so its public key is identical on every start, machine, and
+ * release. That private key is public by design and must never secure production traffic. The institution's public
+ * key comes from {@code config.client-public-key} and can be replaced through the admin API. Key material is never
+ * logged.</p>
  */
 @Component
 public class NibssNipKeyStore {
 
-    static final String SIMULATOR_USER_ID = "NIBSS NIP Simulator";
+    static final String BUILT_IN_KEY_RESOURCE = "/nibss-nip/simulator-test-secret-key.asc";
 
     private static final Logger logger = LoggerFactory.getLogger(NibssNipKeyStore.class);
 
@@ -41,8 +44,9 @@ public class NibssNipKeyStore {
                 );
             }
         }
-        logger.info("NIBSS NIP simulator key {}; client key {}",
+        logger.info("NIBSS NIP simulator key {} ({}); client key {}",
                 PgpKeys.describe(simulatorKeys.publicKeyRing()).fingerprint(),
+                properties.getSimulatorPrivateKey().isBlank() ? "built-in test key" : "configured",
                 clientKey().map(ring -> PgpKeys.describe(ring).fingerprint()).orElse("not configured"));
     }
 
@@ -77,7 +81,7 @@ public class NibssNipKeyStore {
 
     private static PgpSecretKeys simulatorKeys(NibssNipProperties properties) {
         if (properties.getSimulatorPrivateKey().isBlank()) {
-            return PgpSecretKeys.generate(SIMULATOR_USER_ID);
+            return PgpSecretKeys.parse(builtInKey(), new char[0]);
         }
         try {
             return PgpSecretKeys.parse(
@@ -89,6 +93,18 @@ public class NibssNipKeyStore {
             throw new IllegalStateException(
                     "simulator.providers.nibss-nip.config.simulator-private-key is invalid: " + exception.getMessage()
             );
+        }
+    }
+
+    private static byte[] builtInKey() {
+        try (InputStream key = NibssNipKeyStore.class.getResourceAsStream(BUILT_IN_KEY_RESOURCE)) {
+            if (key == null) {
+                throw new IllegalStateException("Built-in NIBSS NIP test key is missing: " + BUILT_IN_KEY_RESOURCE);
+            }
+            return key.readAllBytes();
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Unable to read the built-in NIBSS NIP test key", exception);
         }
     }
 

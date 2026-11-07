@@ -123,7 +123,7 @@ Startup fails when configuration names an unknown provider, operation, field, or
 | `SERVER_PORT` | `50001` (`8080` in the image) | HTTP port |
 | `SIMULATOR_ADMIN_TOKEN` | `simulator` | Token required in `X-Admin-Token` for administration endpoints |
 | `NIBSS_NIP_BASE_PATH` | empty | Optional NIBSS base path |
-| `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` | empty (generated per start) | Base64 of the simulator (NIBSS-side) OpenPGP secret key ring, armored or binary, to keep its key across restarts |
+| `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` | empty (built-in test key) | Base64 of the simulator (NIBSS-side) OpenPGP secret key ring, armored or binary, to replace the built-in test key |
 | `NIBSS_NIP_SIMULATOR_PRIVATE_KEY_PASSPHRASE` | empty | Passphrase of that secret key ring |
 | `NIBSS_NIP_CLIENT_PUBLIC_KEY` | empty | Base64 of the institution's OpenPGP public key ring; can also be uploaded through the admin API |
 | `NIBSS_NIP_INWARD_URL` | empty | Institution inward NIP web service URL called when the simulator plays NIBSS |
@@ -246,7 +246,7 @@ Transactions are keyed by provider and reference, so equal references used with 
 
 ### NIBSS NIP over SOAP (bank onboarding)
 
-The simulator plays NIBSS. It generates its own SSM key pair on startup (set `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` to keep one across restarts). Every request and response payload is SSM-encrypted; see `NIBSS_NIP.md` for the wire format.
+The simulator plays NIBSS. By default it uses a built-in **test** key pair that never changes (fingerprint `86114BA1ABFFCA5D322DCCE909AC730FDC684398`), so you download its public key once and keep it in your test configuration. Its private key is public by design: never use it for real traffic, and set `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` to use your own key in shared environments. Every request and response payload is SSM-encrypted; see `NIBSS_NIP.md` for the wire format.
 
 1. Download the simulator public key. Save it where your SSM library loads the NIBSS key (`nibss_public.key`):
 

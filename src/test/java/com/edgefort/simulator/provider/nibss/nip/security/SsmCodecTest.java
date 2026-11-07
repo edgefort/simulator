@@ -1,5 +1,6 @@
 package com.edgefort.simulator.provider.nibss.nip.security;
 
+import com.edgefort.simulator.support.PgpTestKeys;
 import org.bouncycastle.bcpg.BCPGInputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.bcpg.PacketTags;
@@ -41,8 +42,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SsmCodecTest {
 
-    private static final PgpSecretKeys RECIPIENT = PgpSecretKeys.generate("Recipient");
-    private static final PgpSecretKeys OTHER = PgpSecretKeys.generate("Other");
+    private static final PgpSecretKeys RECIPIENT = PgpTestKeys.generate("Recipient");
+    private static final PgpSecretKeys OTHER = PgpTestKeys.generate("Other");
 
     @Test
     void roundTripsAShortMessageAsOneTerminatedUppercaseHexChunk() {
