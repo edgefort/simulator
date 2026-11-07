@@ -1,4 +1,6 @@
-FROM eclipse-temurin:25-jdk-noble AS builder
+# The JAR is platform-independent: build it once on the native build platform, then copy it into the runtime image
+# of every target platform. Only the runtime stage runs per target architecture.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk-noble AS builder
 
 WORKDIR /workspace
 

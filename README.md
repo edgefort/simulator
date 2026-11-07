@@ -48,7 +48,7 @@ The examples below use the container port `8080`.
 
 ### Docker
 
-The repository includes a multi-stage `Dockerfile`. It builds the application with Java 25, copies only the executable JAR into the runtime image, runs as the unprivileged `simulator` user, and defines an Actuator health check.
+The repository includes a multi-stage `Dockerfile`. It builds the application with Java 25, copies only the executable JAR into the runtime image, runs as the unprivileged `simulator` user, and defines an Actuator health check. The JAR is built once on the native build platform and copied into the runtime image of each target platform.
 
 Build and tag the image from the project root:
 
@@ -155,6 +155,22 @@ Merging a pull request into the protected `main` branch runs the `Publish Docker
 
 ```text
 ghcr.io/edgefort/simulator
+```
+
+Published images are multi-architecture. Docker pulls the variant matching the host automatically:
+
+| Platform | Typical hosts |
+|---|---|
+| `linux/amd64` | Intel/AMD servers, cloud VMs, most CI runners |
+| `linux/arm64` | Apple Silicon Macs, AWS Graviton, Azure Cobalt/Ampere, GCP Axion/Tau T2A |
+| `linux/ppc64le` | IBM Power |
+| `linux/s390x` | IBM Z and LinuxONE |
+
+To build a multi-architecture image locally, use a Buildx builder with the `docker-container` driver:
+
+```shell
+docker buildx create --name multiarch --driver docker-container --use
+docker buildx build --platform linux/amd64,linux/arm64,linux/ppc64le,linux/s390x --tag simulator:local .
 ```
 
 The workflow uses the [Git Semantic Version](https://github.com/marketplace/actions/git-semantic-version) action to calculate versions directly from Git history, so no repository-maintained version script is required. The first successful publication is version `0.1.0`. Later versions are calculated from Conventional Commit messages merged since the previous `vX.Y.Z` Git tag:
