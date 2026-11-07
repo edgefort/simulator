@@ -4,6 +4,7 @@ import com.edgefort.simulator.provider.nibss.nip.security.PgpKeys;
 import com.edgefort.simulator.provider.nibss.nip.security.PgpSecretKeys;
 import com.edgefort.simulator.support.NipSoapMessages;
 import com.edgefort.simulator.support.NoResponseAssertions;
+import com.edgefort.simulator.support.PgpTestKeys;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,7 +54,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class NibssNipSoapIntegrationTest {
 
     private static final String ADMIN_TOKEN = "soap-admin";
-    private static final PgpSecretKeys INSTITUTION_KEYS = PgpSecretKeys.generate("Test Institution");
+    private static final PgpSecretKeys INSTITUTION_KEYS = PgpTestKeys.generate("Test Institution");
 
     private static final String NIP_INTERFACE = "/NIPWS/NIPInterface";
     private static final String NIP_TSQ_INTERFACE = "/NIPWS/NIPTSQInterface";
@@ -269,7 +270,7 @@ class NibssNipSoapIntegrationTest {
         mockMvc.perform(get("/admin/providers/nibss-nip/keys").header("X-Admin-Token", ADMIN_TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.simulator.fingerprint").value(PgpKeys.describe(simulatorKey).fingerprint()))
-                .andExpect(jsonPath("$.simulator.userIds[0]").value("NIBSS NIP Simulator"))
+                .andExpect(jsonPath("$.simulator.userIds[0]").value("NIBSS NIP Simulator TEST KEY - NOT FOR PRODUCTION"))
                 .andExpect(jsonPath("$.client.fingerprint").value(fingerprint))
                 .andExpect(content().string(not(containsString("BEGIN PGP"))));
 

@@ -20,7 +20,7 @@ import java.time.Duration;
 @ConfigurationProperties("simulator.providers.nibss-nip.config")
 public class NibssNipProperties {
 
-    /** Simulator (NIBSS-side) secret key ring. Empty: a new RSA-2048 key pair is generated on every startup. */
+    /** Simulator (NIBSS-side) secret key ring. Empty: the built-in test key pair, identical on every startup. */
     @NotNull
     private String simulatorPrivateKey = "";
 

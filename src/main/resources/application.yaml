@@ -81,7 +81,8 @@ simulator:
       security-mode: ssm-pgp
       base-path: ${NIBSS_NIP_BASE_PATH:}
       config:
-        # Base64 of an OpenPGP secret key ring (armored or binary). Empty: a key pair is generated on startup.
+        # Base64 of an OpenPGP secret key ring (armored or binary). Empty: the built-in test key pair
+        # (nibss-nip/simulator-test-secret-key.asc), identical on every start; never use it in production.
         simulator-private-key: ${NIBSS_NIP_SIMULATOR_PRIVATE_KEY:}
         simulator-private-key-passphrase: ${NIBSS_NIP_SIMULATOR_PRIVATE_KEY_PASSPHRASE:}
         # Base64 of the institution's OpenPGP public key ring. Empty: upload it through the admin API.

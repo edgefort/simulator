@@ -3,6 +3,7 @@ package com.edgefort.simulator;
 import com.edgefort.simulator.provider.nibss.nip.security.PgpKeys;
 import com.edgefort.simulator.provider.nibss.nip.security.PgpSecretKeys;
 import com.edgefort.simulator.support.FakeInstitutionServer;
+import com.edgefort.simulator.support.PgpTestKeys;
 import com.jayway.jsonpath.JsonPath;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.junit.jupiter.api.AfterAll;
@@ -39,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class NibssNipInwardIntegrationTest {
 
     private static final String ADMIN_TOKEN = "inward-admin";
-    private static final PgpSecretKeys INSTITUTION_KEYS = PgpSecretKeys.generate("Test Institution");
+    private static final PgpSecretKeys INSTITUTION_KEYS = PgpTestKeys.generate("Test Institution");
     private static final FakeInstitutionServer INSTITUTION = new FakeInstitutionServer(INSTITUTION_KEYS);
 
     @Autowired
