@@ -1,6 +1,5 @@
 package com.edgefort.simulator.provider.nibss.nip.api;
 
-import com.edgefort.simulator.provider.nibss.nip.NibssNipProvider;
 import org.springframework.core.Ordered;
 import org.springframework.core.ResolvableType;
 import org.springframework.core.annotation.Order;
@@ -22,9 +21,10 @@ import static com.edgefort.simulator.provider.nibss.nip.contract.NibssNipRespons
  * Answers requests that cannot be processed with the operation's own NIP response message carrying response code
  * {@code 30} (format error). Fields the request supplied are echoed as in a normal response. This covers missing or
  * invalid elements, unreadable XML (including documents with a DTD or external entity, which the XML reader
- * rejects), and non-XML content types.
+ * rejects), and non-XML content types. The SOAP transport builds the same message through
+ * {@link #responseMessage(Class, Object)} and returns it encrypted.
  */
-@RestControllerAdvice(basePackageClasses = NibssNipProvider.class)
+@RestControllerAdvice(assignableTypes = NibssNipController.class)
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class NibssNipExceptionHandler {
 
@@ -53,9 +53,9 @@ public class NibssNipExceptionHandler {
     }
 
     /**
-     * Builds the response message, echoing request elements that share a name with a response element.
+     * Builds the format-error response message, echoing request elements that share a name with a response element.
      */
-    private static Object responseMessage(Class<?> responseType, Object request) {
+    static Object responseMessage(Class<?> responseType, Object request) {
         Map<String, Object> requestValues = new HashMap<>();
         if (request != null && request.getClass().isRecord()) {
             for (RecordComponent component : request.getClass().getRecordComponents()) {

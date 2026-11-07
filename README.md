@@ -10,20 +10,20 @@ The application owns behavior selection, bounded in-memory transaction state, de
 
 | Provider | Admin provider ID | Implemented interface | Payload and security |
 |---|---|---|---|
-| NIBSS NIP | `nibss-nip` | NIP v9.4 XML messages 010 through 023 | XML over local HTTP; the institution WSDL (SOAP binding) and message security are pending |
+| NIBSS NIP | `nibss-nip` | NIP v9.5 SOAP web service (`/NIPWS/...`) carrying messages 010 through 023, inward calls to the institution (simulator plays NIBSS), and the v9.4 XML routes | SOAP 1.1 with SSM (PGP) encrypted `request`/`return` payloads; plain XML on the v9.4 routes |
 | Interswitch | `interswitch` | Quickteller Service v5: OAuth, Send Money (name enquiry, banks, transfer), Bills Payment and Airtime (discovery, customer validation, payment), shared transaction query | JSON; OAuth client credentials, bearer authorization, `TerminalId`, secure-data `SHA-512` MAC |
 | Onafriq | `onafriq-bill-payment` | Biller Aggregation Platform API v1.0.0 bill-payment routes | JSON; `x-api-key` or `Authorization: Api-key`; HMAC authentication pending |
 
 Each provider document lists the reviewed sources, routes, operation names, response-code mapping, error formats, and every known deviation:
 
-- `NIBSS_NIP_V9_4.md`
+- `NIBSS_NIP.md`
 - `INTERSWITCH_SEND_MONEY_V5.md`
 - `INTERSWITCH_BILLS_PAYMENT_V5.md`
 - `ONAFRIQ_BILL_PAYMENT_V1.md`
 
 This is not a claim of provider certification. Before integrating a real consumer, confirm each provider module against the specification and credentials assigned to that consumer. Open specification dependencies:
 
-- NIBSS: the institution WSDL and message-security specification, to replace the local HTTP XML transport with the production SOAP binding.
+- NIBSS: the element wrapping the encrypted SOAP response (`return`) is unverified until NIBSS's WSDL or a captured NIBSS response is available.
 - Onafriq: the HMAC signing specification.
 - Recorded sandbox responses, where available, for byte-level contract tests.
 
@@ -123,6 +123,15 @@ Startup fails when configuration names an unknown provider, operation, field, or
 | `SERVER_PORT` | `50001` (`8080` in the image) | HTTP port |
 | `SIMULATOR_ADMIN_TOKEN` | `simulator` | Token required in `X-Admin-Token` for administration endpoints |
 | `NIBSS_NIP_BASE_PATH` | empty | Optional NIBSS base path |
+| `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` | empty (generated per start) | Base64 of the simulator (NIBSS-side) OpenPGP secret key ring, armored or binary, to keep its key across restarts |
+| `NIBSS_NIP_SIMULATOR_PRIVATE_KEY_PASSPHRASE` | empty | Passphrase of that secret key ring |
+| `NIBSS_NIP_CLIENT_PUBLIC_KEY` | empty | Base64 of the institution's OpenPGP public key ring; can also be uploaded through the admin API |
+| `NIBSS_NIP_INWARD_URL` | empty | Institution inward NIP web service URL called when the simulator plays NIBSS |
+| `NIBSS_NIP_INWARD_NAMESPACE` | `http://core.nip.nibss/` | Operation namespace of the institution's inward service |
+| `NIBSS_NIP_INWARD_REQUEST_ELEMENT` | `request` | Element carrying the encrypted inward request |
+| `NIBSS_NIP_INWARD_SOAP_ACTION` | empty | `SOAPAction` sent on inward calls |
+| `NIBSS_NIP_INWARD_TIMEOUT` | `30s` | Connect and response timeout of inward calls |
+| `NIBSS_NIP_INWARD_SOURCE_INSTITUTION_CODE` | `999999` | Sender code in characters 1–6 of generated inward session IDs |
 | `INTERSWITCH_BASE_PATH` | empty | Optional Interswitch base path |
 | `ONAFRIQ_BASE_PATH` | empty | Optional Onafriq base path |
 | `INTERSWITCH_CLIENT_ID` | `simulator-client` | OAuth client ID accepted by the token endpoint |
@@ -227,7 +236,7 @@ Point each client integration at the simulator as that provider's base URL. All 
 
 | Provider | Paths |
 |---|---|
-| NIBSS NIP | `/nip/v9.4/...` |
+| NIBSS NIP | `/NIPWS/NIPInterface`, `/NIPWS/NIPTSQInterface`, `/NIPWS/NIPNEInterface` (SOAP), `/nip/v9.4/...` (XML) |
 | Interswitch | `/passport/oauth/token`, `/quicktellerservice/api/v5/...` |
 | Onafriq | `/services/...` |
 
@@ -235,7 +244,81 @@ Transactions are keyed by provider and reference, so equal references used with 
 
 ## Provider examples
 
-NIBSS direct-credit transfer:
+### NIBSS NIP over SOAP (bank onboarding)
+
+The simulator plays NIBSS. It generates its own SSM key pair on startup (set `NIBSS_NIP_SIMULATOR_PRIVATE_KEY` to keep one across restarts). Every request and response payload is SSM-encrypted; see `NIBSS_NIP.md` for the wire format.
+
+1. Download the simulator public key. Save it where your SSM library loads the NIBSS key (`nibss_public.key`):
+
+   ```shell
+   curl --header 'X-Admin-Token: simulator' --output nibss_public.key \
+     http://localhost:8080/admin/providers/nibss-nip/keys/simulator-public
+   ```
+
+   Add `?format=armored` for an ASCII-armored copy.
+
+2. Give the simulator your public key (binary as exported by SSM, or ASCII-armored), or set `NIBSS_NIP_CLIENT_PUBLIC_KEY` to its Base64 encoding:
+
+   ```shell
+   curl --request PUT --header 'X-Admin-Token: simulator' \
+     --header 'Content-Type: application/octet-stream' --data-binary @public.key \
+     http://localhost:8080/admin/providers/nibss-nip/keys/client-public
+
+   curl --header 'X-Admin-Token: simulator' http://localhost:8080/admin/providers/nibss-nip/keys
+   ```
+
+3. Point the NIP client at `http://localhost:8080/NIPWS/NIPInterface` (name enquiry, FT credit) and `http://localhost:8080/NIPWS/NIPTSQInterface` (TSQ); `/NIPWS/NIPNEInterface` is also served. Append `?wsdl` for the service description. Encrypt the NIP message with SSM using `nibss_public.key`, send it in `request`, and decrypt the `return` element of the response with your private key:
+
+   ```shell
+   curl --request POST http://localhost:8080/NIPWS/NIPInterface \
+     --header 'Content-Type: text/xml; charset=utf-8' \
+     --header 'SOAPAction: ""' \
+     --data '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:core="http://core.nip.nibss/">
+       <soapenv:Header/>
+       <soapenv:Body>
+         <core:nameenquirysingleitem>
+           <request>SSM-ENCRYPTED-NESingleRequest;</request>
+         </core:nameenquirysingleitem>
+       </soapenv:Body>
+     </soapenv:Envelope>'
+   ```
+
+### NIBSS inward credit and status query
+
+The simulator can also play NIBSS calling your inward NIP web service. Set `NIBSS_NIP_INWARD_URL` (and, if your WSDL differs, `NIBSS_NIP_INWARD_NAMESPACE` and `NIBSS_NIP_INWARD_REQUEST_ELEMENT`), upload your public key as above, then send a credit:
+
+```shell
+curl --request POST http://localhost:8080/admin/providers/nibss-nip/inward/credit \
+  --header 'X-Admin-Token: simulator' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "destinationInstitutionCode": "000058",
+    "beneficiaryAccountName": "Ajibade Oluwasegun",
+    "beneficiaryAccountNumber": "0123456789",
+    "beneficiaryBankVerificationNumber": "22222222222",
+    "originatorAccountName": "Adewale Hassan",
+    "originatorAccountNumber": "3333002345",
+    "originatorBankVerificationNumber": "1033000441",
+    "narration": "Inward test",
+    "paymentReference": "inward-001",
+    "amount": 5000.00
+  }'
+```
+
+The response shows the generated `sessionId`, the plaintext request and your decrypted response, your `responseCode`, and what the status query will report. As in the NIBSS "FT Credit Implementation in Steps" flow, your service answers `00` without crediting, then sends a TSQ (`txnstatusquerysingleitem`) for that `sessionId` to `/NIPWS/NIPTSQInterface` and credits only on `00`. To test the "do not credit" path, select failure for the inward operation before sending the credit; the TSQ then answers `96`:
+
+```shell
+curl --request POST http://localhost:8080/admin/overrides \
+  --header 'X-Admin-Token: simulator' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider": "nibss-nip", "operation": "inward-fund-transfer-direct-credit", "profile": "failure"}'
+```
+
+`POST /admin/providers/nibss-nip/inward/name-enquiry` with `destinationInstitutionCode` and `accountNumber` sends a name enquiry the same way.
+
+### NIBSS v9.4 XML route
+
+NIBSS direct-credit transfer over the plain-XML v9.4 route:
 
 ```shell
 curl --request POST http://localhost:8080/nip/v9.4/fundtransfersingleitem_dc \
@@ -259,6 +342,8 @@ curl --request POST http://localhost:8080/nip/v9.4/fundtransfersingleitem_dc \
     <Amount>1250.50</Amount>
   </FTSingleCreditRequest>'
 ```
+
+### Interswitch and Onafriq
 
 Interswitch access token, then transfer. The `mac` is the lowercase `SHA-512` digest of `100000566CA100000566ACNG` (secure-data version 12 field order):
 
@@ -372,6 +457,10 @@ Every `/admin/**` request requires `X-Admin-Token`. The default local token is `
 | Test-data rules | `POST` / `GET /admin/rules`, `DELETE /admin/rules/{id}` |
 | Inspect a transaction | `GET /admin/transactions/{provider}/{reference}` |
 | Reset | `POST /admin/state/reset` or `DELETE /admin/state` |
+| NIBSS SSM keys | `GET /admin/providers/nibss-nip/keys`, `GET .../keys/simulator-public`, `PUT .../keys/client-public` |
+| NIBSS inward calls (simulator plays NIBSS) | `POST /admin/providers/nibss-nip/inward/name-enquiry`, `POST .../inward/credit` |
+
+The NIBSS key and inward endpoints stay under `/admin/...` and require `X-Admin-Token` even when `NIBSS_NIP_BASE_PATH` is set. Reset does not change keys.
 
 Make every NIBSS operation fail while Interswitch keeps succeeding:
 

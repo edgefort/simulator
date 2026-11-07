@@ -97,7 +97,9 @@ Client application -----> | Provider-specific API     |   exact specification su
 Each provider is mounted at its specification paths, for example:
 
 ```text
-/nip/v9.4/...                       NIBSS (local HTTP XML wrapper; SOAP binding pending the WSDL)
+/NIPWS/NIPInterface, /NIPWS/NIPTSQInterface, /NIPWS/NIPNEInterface
+                                    NIBSS NIP v9.5 SOAP web service with SSM encryption
+/nip/v9.4/...                       NIBSS (local HTTP XML wrapper of the same messages)
 /passport/oauth/token               Interswitch OAuth
 /quicktellerservice/api/v5/...      Interswitch Quickteller Service v5
 /services/...                       Onafriq Biller Aggregation Platform
@@ -106,6 +108,8 @@ Each provider is mounted at its specification paths, for example:
 A client sets the provider base URL to the simulator. If two providers ever publish the same path, give one of them `simulator.providers.<id>.base-path` (for example `/onafriq`) and include that prefix in the client's base URL; the prefix is a deployment setting, exactly like a different provider host. Spring MVC fails startup when two providers map an identical route.
 
 Authentication, error handling, and availability are scoped by the provider's Java package, never by URL prefix, so they follow the provider when it is mounted under a base path.
+
+A provider module may also own control-plane endpoints, for example key exchange or calls in which the simulator plays the provider towards the client (NIBSS inward). Such controllers are annotated `@ControlPlaneEndpoint` and mapped under `/admin/...`: the provider base path and the disabled-provider check never apply to them, so they always stay behind the admin token, and they render admin errors, never provider errors.
 
 ### Provider adapter
 
@@ -190,6 +194,8 @@ POST   /admin/overrides        GET /admin/overrides        DELETE /admin/overrid
 POST   /admin/rules            GET /admin/rules            DELETE /admin/rules/{id}
 GET    /admin/transactions/{provider}/{reference}
 POST   /admin/state/reset      (alias: DELETE /admin/state)
+GET    /admin/providers/nibss-nip/keys[/simulator-public]  PUT /admin/providers/nibss-nip/keys/client-public
+POST   /admin/providers/nibss-nip/inward/{name-enquiry|credit}   (simulator plays NIBSS)
 ```
 
 Reset clears runtime state and restores the configured profile assignments and rules. Administrative endpoints are never part of a simulated provider contract.
@@ -208,7 +214,7 @@ src/main/java/com/edgefort/simulator/
   admin/api/                   control plane
   infrastructure/web/          base paths, provider availability, timeouts, capacity
   provider/
-    nibss/nip/                 NibssNipProvider + api/ application/ contract/
+    nibss/nip/                 NibssNipProvider + api/ application/ contract/ config/ security/ (SSM) soap/ control/ (admin)
     interswitch/               InterswitchProvider + common/ transfer/ billpayment/
     onafriq/billpayment/       OnafriqBillPaymentProvider + api/ application/ config/ contract/
 ```
@@ -237,7 +243,7 @@ simulator/
 
 Each provider document records the reviewed specification, implemented routes, operation names, declared outcomes and query statuses, test-data match fields, response-code mapping, error rendering, and every known deviation:
 
-- `NIBSS_NIP_V9_4.md`
+- `NIBSS_NIP.md`
 - `INTERSWITCH_SEND_MONEY_V5.md`
 - `INTERSWITCH_BILLS_PAYMENT_V5.md`
 - `ONAFRIQ_BILL_PAYMENT_V1.md`
@@ -248,7 +254,7 @@ Provider specifications can be versioned, restricted, or changed. Record the sim
 
 Open specification dependencies:
 
-- NIBSS: the institution WSDL and message-security specification are required to replace the local HTTP XML wrapper with the production SOAP binding.
+- NIBSS: the SOAP response element (`return`) is unverified, pending NIBSS's WSDL or a captured NIBSS response.
 - Onafriq: the HMAC signing specification is required to support HMAC-authenticated clients.
 - Recorded sandbox responses, where available, are required for byte-level contract tests.
 
@@ -357,7 +363,7 @@ For every additional provider:
 | Area | State |
 |---|---|
 | Core behavior model, control plane, timeouts, base paths, metrics | Implemented |
-| NIBSS NIP v9.4 messages 010–023 | Implemented over local HTTP XML; SOAP binding and message security pending the WSDL and security specification |
+| NIBSS NIP messages 010–023 | Implemented over the v9.5 SOAP web service with SSM (PGP) encryption, inward flow through the admin API, and the v9.4 local HTTP XML routes; SOAP response element unverified pending NIBSS's WSDL or a captured response |
 | Interswitch Send Money, Bills Payment and Airtime v5 | Implemented from public documentation |
 | Onafriq bill payment | Implemented from public documentation; HMAC authentication pending the signing specification |
 | Recorded-response contract tests | Pending sandbox recordings |

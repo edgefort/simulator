@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.method.HandlerTypePredicate;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -15,6 +16,10 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 /**
  * Mounts each provider at its specification paths, optionally behind {@code simulator.providers.<id>.base-path},
  * and hides disabled providers. Spring MVC fails startup when two providers map the same route.
+ *
+ * <p>Handlers annotated with {@link ControlPlaneEndpoint} belong to the control plane even when they live in a
+ * provider package: they keep their {@code /admin/...} paths, so the admin token always protects them, and stay
+ * available when the provider is disabled.</p>
  */
 @Configuration
 public class ProviderWebConfiguration implements WebMvcConfigurer {
@@ -30,7 +35,8 @@ public class ProviderWebConfiguration implements WebMvcConfigurer {
         registry.providers().forEach(provider -> {
             String basePath = registry.settings(provider.id()).getBasePath();
             if (!basePath.isEmpty()) {
-                configurer.addPathPrefix(basePath, HandlerTypePredicate.forBasePackage(provider.basePackage()));
+                configurer.addPathPrefix(basePath, HandlerTypePredicate.forBasePackage(provider.basePackage())
+                        .and(type -> !isControlPlane(type)));
             }
         });
     }
@@ -40,7 +46,7 @@ public class ProviderWebConfiguration implements WebMvcConfigurer {
         interceptors.addInterceptor(new HandlerInterceptor() {
             @Override
             public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-                if (handler instanceof HandlerMethod method) {
+                if (handler instanceof HandlerMethod method && !isControlPlane(method.getBeanType())) {
                     boolean disabled = registry.owner(method.getBeanType())
                             .map(provider -> !registry.settings(provider.id()).isEnabled())
                             .orElse(false);
@@ -52,5 +58,9 @@ public class ProviderWebConfiguration implements WebMvcConfigurer {
                 return true;
             }
         }).order(Ordered.HIGHEST_PRECEDENCE);
+    }
+
+    private static boolean isControlPlane(Class<?> handlerType) {
+        return AnnotatedElementUtils.hasAnnotation(handlerType, ControlPlaneEndpoint.class);
     }
 }

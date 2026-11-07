@@ -1,7 +1,7 @@
 package com.edgefort.simulator.provider.nibss.nip.contract;
 
 /**
- * NIP response codes returned by this module. See NIBSS_NIP_V9_4.md for the source of each code.
+ * NIP response codes returned by this module. See NIBSS_NIP.md for the source of each code.
  */
 public final class NibssNipResponseCodes {
 
