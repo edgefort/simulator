@@ -53,7 +53,7 @@ public class InMemoryTransactionStore implements TransactionStore {
     }
 
     @Override
-    public void reset() {
+    public synchronized void reset() {
         transactions.clear();
     }
 

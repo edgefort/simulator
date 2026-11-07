@@ -1,9 +1,8 @@
-package com.edgefort.simulator.infrastructure.web;
+package com.edgefort.simulator.admin.api;
 
-import com.edgefort.simulator.core.application.SimulationCapacityException;
-import com.edgefort.simulator.core.scenario.UnknownScenarioException;
-import org.springframework.http.HttpStatus;
+import com.edgefort.simulator.core.scenario.SimulationControlException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -11,8 +10,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-@RestControllerAdvice
-public class ApiExceptionHandler {
+/**
+ * Error responses for the simulator control plane only. Provider modules render their own documented errors.
+ */
+@RestControllerAdvice(basePackageClasses = AdminController.class)
+public class AdminExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ResponseEntity<Map<String, Object>> validation(MethodArgumentNotValidException exception) {
@@ -26,18 +28,18 @@ public class ApiExceptionHandler {
         ));
     }
 
-    @ExceptionHandler({UnknownScenarioException.class, IllegalArgumentException.class})
-    ResponseEntity<Map<String, String>> badRequest(RuntimeException exception) {
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<Map<String, String>> unreadable(HttpMessageNotReadableException exception) {
         return ResponseEntity.badRequest().body(Map.of(
-                "error", "INVALID_SIMULATION_REQUEST",
-                "message", exception.getMessage()
+                "error", "INVALID_REQUEST_BODY",
+                "message", "Request body is missing or malformed"
         ));
     }
 
-    @ExceptionHandler(SimulationCapacityException.class)
-    ResponseEntity<Map<String, String>> capacity(SimulationCapacityException exception) {
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
-                "error", "SIMULATOR_CAPACITY_REACHED",
+    @ExceptionHandler(SimulationControlException.class)
+    ResponseEntity<Map<String, String>> control(SimulationControlException exception) {
+        return ResponseEntity.badRequest().body(Map.of(
+                "error", "INVALID_SIMULATION_CONTROL",
                 "message", exception.getMessage()
         ));
     }

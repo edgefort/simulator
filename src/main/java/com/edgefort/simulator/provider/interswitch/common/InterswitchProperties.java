@@ -1,4 +1,4 @@
-package com.edgefort.simulator.provider.interswitch.transfer.config;
+package com.edgefort.simulator.provider.interswitch.common;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
@@ -6,8 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 @Validated
-@ConfigurationProperties("simulator.providers.interswitch-transfer.config")
-public class InterswitchTransferProperties {
+@ConfigurationProperties("simulator.providers.interswitch.config")
+public class InterswitchProperties {
 
     @NotBlank
     private String clientId = "simulator-client";

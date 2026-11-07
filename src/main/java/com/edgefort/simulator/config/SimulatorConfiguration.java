@@ -2,23 +2,25 @@ package com.edgefort.simulator.config;
 
 import com.edgefort.simulator.core.application.BoundedDelayExecutor;
 import com.edgefort.simulator.core.application.CompletionScheduler;
-import com.edgefort.simulator.core.application.HttpCallbackPublisher;
 import com.edgefort.simulator.core.application.ProviderOperationSimulator;
-import com.edgefort.simulator.core.application.TransferSimulationService;
-import com.edgefort.simulator.core.scenario.ActiveProfileRegistry;
+import com.edgefort.simulator.core.application.SimulationTelemetry;
+import com.edgefort.simulator.core.application.TransactionSimulationService;
+import com.edgefort.simulator.core.provider.ProviderRegistry;
+import com.edgefort.simulator.core.provider.SimulatedProvider;
 import com.edgefort.simulator.core.scenario.DefaultScenarioResolver;
-import com.edgefort.simulator.core.scenario.InMemoryScenarioOverrideStore;
+import com.edgefort.simulator.core.scenario.ProfileAssignments;
+import com.edgefort.simulator.core.scenario.ProfileCatalog;
+import com.edgefort.simulator.core.scenario.ScenarioOverrideStore;
 import com.edgefort.simulator.core.scenario.ScenarioResolver;
+import com.edgefort.simulator.core.scenario.ScenarioRuleStore;
 import com.edgefort.simulator.core.state.InMemoryTransactionStore;
 import com.edgefort.simulator.core.state.TransactionStore;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
-import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
 import java.time.Clock;
-import java.time.Duration;
+import java.util.List;
 
 @Configuration
 public class SimulatorConfiguration {
@@ -26,6 +28,23 @@ public class SimulatorConfiguration {
     @Bean
     Clock simulatorClock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    ProviderRegistry providerRegistry(List<SimulatedProvider> providers, SimulationProperties properties) {
+        return new ProviderRegistry(providers, properties);
+    }
+
+    @Bean
+    ProfileCatalog profileCatalog(SimulationProperties properties, ProviderRegistry registry) {
+        ProfileCatalog catalog = new ProfileCatalog(properties);
+        registry.providers().forEach(provider -> provider.operations().forEach(operation ->
+                operation.unsupportedReason(catalog.defaultBehavior()).ifPresent(reason -> {
+                    throw new IllegalStateException("simulator.default-profile '%s' is not valid for %s %s: %s"
+                            .formatted(catalog.defaultProfile(), provider.id(), operation.name(), reason));
+                })
+        ));
+        return catalog;
     }
 
     @Bean
@@ -38,30 +57,48 @@ public class SimulatorConfiguration {
     }
 
     @Bean
-    InMemoryScenarioOverrideStore scenarioOverrideStore(Clock clock, SimulationProperties properties) {
-        return new InMemoryScenarioOverrideStore(
+    ProfileAssignments profileAssignments(
+            SimulationProperties properties,
+            ProfileCatalog catalog,
+            ProviderRegistry registry
+    ) {
+        return new ProfileAssignments(properties, catalog, registry);
+    }
+
+    @Bean
+    ScenarioOverrideStore scenarioOverrideStore(
+            Clock clock,
+            SimulationProperties properties,
+            ProfileCatalog catalog,
+            ProviderRegistry registry
+    ) {
+        return new ScenarioOverrideStore(
                 clock,
                 properties.getLimits().getOverrideTtl(),
-                properties.getLimits().getMaxOverrides()
+                properties.getLimits().getMaxOverrides(),
+                catalog,
+                registry
         );
     }
 
     @Bean
-    ActiveProfileRegistry activeProfileRegistry(SimulationProperties properties) {
-        Duration maximumDelay = properties.getLimits().getMaxDelay();
-        properties.getProfiles().forEach((name, profile) -> {
-            validateDuration(name, "delay", profile.getDelay(), maximumDelay);
-            validateDuration(name, "transition-delay", profile.getTransitionDelay(), maximumDelay);
-        });
-        return new ActiveProfileRegistry(properties);
+    ScenarioRuleStore scenarioRuleStore(
+            SimulationProperties properties,
+            ProfileCatalog catalog,
+            ProviderRegistry registry
+    ) {
+        return new ScenarioRuleStore(properties, catalog, registry);
     }
 
     @Bean
     ScenarioResolver scenarioResolver(
-            ActiveProfileRegistry profileRegistry,
-            InMemoryScenarioOverrideStore overrideStore
+            ProfileCatalog catalog,
+            ProfileAssignments assignments,
+            ScenarioOverrideStore overrides,
+            ScenarioRuleStore rules,
+            ProviderRegistry registry
     ) {
-        return new DefaultScenarioResolver(profileRegistry, overrideStore);
+        return new DefaultScenarioResolver(catalog, assignments, overrides, rules, registry);
     }
 
     @Bean
@@ -73,37 +110,27 @@ public class SimulatorConfiguration {
     }
 
     @Bean
-    ProviderOperationSimulator providerOperationSimulator(
-            ScenarioResolver scenarioResolver,
-            BoundedDelayExecutor delayExecutor
-    ) {
-        return new ProviderOperationSimulator(scenarioResolver, delayExecutor);
+    SimulationTelemetry simulationTelemetry(MeterRegistry meterRegistry, BoundedDelayExecutor delayExecutor) {
+        return new SimulationTelemetry(meterRegistry, delayExecutor);
     }
 
     @Bean
-    HttpCallbackPublisher callbackPublisher(SimulationProperties properties) {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(2))
-                .version(HttpClient.Version.HTTP_1_1)
-                .build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(client);
-        requestFactory.setReadTimeout(Duration.ofSeconds(2));
-        return new HttpCallbackPublisher(
-                RestClient.builder().requestFactory(requestFactory).build(),
-                properties.getAllowedCallbackHosts()
-        );
+    ProviderOperationSimulator providerOperationSimulator(
+            ScenarioResolver scenarioResolver,
+            BoundedDelayExecutor delayExecutor,
+            SimulationTelemetry telemetry
+    ) {
+        return new ProviderOperationSimulator(scenarioResolver, delayExecutor, telemetry);
     }
 
     @Bean
     CompletionScheduler completionScheduler(
             TransactionStore transactionStore,
-            HttpCallbackPublisher callbackPublisher,
             Clock clock,
             SimulationProperties properties
     ) {
         return new CompletionScheduler(
                 transactionStore,
-                callbackPublisher,
                 clock,
                 properties.getLimits().getSchedulerThreads(),
                 properties.getLimits().getMaxTransactions()
@@ -111,27 +138,21 @@ public class SimulatorConfiguration {
     }
 
     @Bean
-    TransferSimulationService transferSimulationService(
+    TransactionSimulationService transactionSimulationService(
             ScenarioResolver scenarioResolver,
             TransactionStore transactionStore,
             BoundedDelayExecutor delayExecutor,
             CompletionScheduler completionScheduler,
+            SimulationTelemetry telemetry,
             Clock clock
     ) {
-        return new TransferSimulationService(
+        return new TransactionSimulationService(
                 scenarioResolver,
                 transactionStore,
                 delayExecutor,
                 completionScheduler,
+                telemetry,
                 clock
         );
-    }
-
-    private void validateDuration(String profile, String property, Duration value, Duration maximum) {
-        if (value.isNegative() || value.compareTo(maximum) > 0) {
-            throw new IllegalStateException(
-                    "simulator.profiles.%s.%s must be between zero and %s".formatted(profile, property, maximum)
-            );
-        }
     }
 }

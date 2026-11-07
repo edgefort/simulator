@@ -2,39 +2,30 @@
 
 This project runs lightweight simulations of multiple payment providers in one Spring Boot application.
 
-The application owns scenario selection, bounded in-memory transaction state, delays, timeouts, and pending transitions. No database, broker, cache, or embedded mock server is required.
+A client integrates with the simulator exactly as it would with the real provider: same paths, headers, authentication, bodies, response codes, HTTP statuses, and error formats. Switching to the real provider changes only the base URL and credentials. Behavior such as failures, pending transactions, and timeouts is chosen out of band through the Admin API, never through provider requests.
+
+The application owns behavior selection, bounded in-memory transaction state, delays, timeouts, and pending transitions. No database, broker, cache, or embedded mock server is required.
 
 ## Available providers
 
 | Provider | Admin provider ID | Implemented interface | Payload and security |
 |---|---|---|---|
-| NIBSS NIP | `nibss-nip` | NIP v9.4 XML messages 010 through 023 | XML over local HTTP; institution-specific WSDL and message security are not simulated because they were not supplied |
-| Interswitch | `interswitch-transfer` | Quickteller Service Send Money v5 authentication, account-name enquiry, bank listing, transfer, and transaction query | JSON, OAuth client credentials, bearer authorization, `TerminalId`, and secure-data v12 `SHA-512` MAC validation |
-| Interswitch | `interswitch-bill-payment` | Quickteller Service v5 biller discovery, customer validation, bills payment, airtime recharge, and transaction query | JSON; shares Interswitch OAuth client credentials, bearer authorization, and `TerminalId` with Send Money |
-| Onafriq | `onafriq-bill-payment` | Biller Aggregation Platform API v1.0.0 bill-payment discovery, validation, purchase, balance, query, and requery operations | JSON and either `x-api-key` or `Authorization: Api-key`; HMAC authentication is not simulated |
+| NIBSS NIP | `nibss-nip` | NIP v9.4 XML messages 010 through 023 | XML over local HTTP; the institution WSDL (SOAP binding) and message security are pending |
+| Interswitch | `interswitch` | Quickteller Service v5: OAuth, Send Money (name enquiry, banks, transfer), Bills Payment and Airtime (discovery, customer validation, payment), shared transaction query | JSON; OAuth client credentials, bearer authorization, `TerminalId`, secure-data `SHA-512` MAC |
+| Onafriq | `onafriq-bill-payment` | Biller Aggregation Platform API v1.0.0 bill-payment routes | JSON; `x-api-key` or `Authorization: Api-key`; HMAC authentication pending |
 
-Use `GET /admin/providers` to obtain the enabled status, specification version, and security mode configured for each provider at runtime. The provider IDs in this table are also used by transaction inspection and one-time admin overrides.
+Each provider document lists the reviewed sources, routes, operation names, response-code mapping, error formats, and every known deviation:
 
-## Contract status
+- `NIBSS_NIP_V9_4.md`
+- `INTERSWITCH_SEND_MONEY_V5.md`
+- `INTERSWITCH_BILLS_PAYMENT_V5.md`
+- `ONAFRIQ_BILL_PAYMENT_V1.md`
 
-The NIBSS module implements the complete request/response XML pairs present in the supplied NIP v9.4 excerpt: name enquiry, direct-credit transfer, direct-debit transfer, transaction status query, balance enquiry, direct-credit advice, and direct-debit advice. The former provisional JSON endpoints have been removed. See `NIBSS_NIP_V9_4.md` for the exact scope and limitations.
+This is not a claim of provider certification. Before integrating a real consumer, confirm each provider module against the specification and credentials assigned to that consumer. Open specification dependencies:
 
-This is not a claim of NIBSS certification. The supplied material does not include the institution-specific WSDL, service binding, endpoint address, or complete message-security specification, and it ends partway through message 025. The simulator therefore exposes the documented XML messages through local HTTP routes without inventing the missing SOAP binding or security rules.
-
-The Interswitch module follows the public Quickteller Service Send Money v5 documentation reviewed on 18 July 2026. It implements the published OAuth client-credentials flow, bearer authorization, `TerminalId` and operation headers, transfer body casing, secure-data version 12 `SHA-512` MAC, response fields, and five-digit response codes. The public documentation contains contradictions and incomplete examples, so this implementation is not a claim of partner certification. See `INTERSWITCH_SEND_MONEY_V5.md` for the reviewed sources and exact limitations.
-
-The Interswitch bill-payment module follows the public Quickteller Bills Payment and Airtime & Data v5 guides reviewed on 18 July 2026. It shares the OAuth and `TerminalId` security surface, implements category/biller/payment-item discovery, customer validation, utility payment, MTN/9mobile/Glo airtime recharge, and query, and applies the documented ₦50–₦10,000 regular-airtime range. See `INTERSWITCH_BILLS_PAYMENT_V5.md` for deterministic product identifiers, response codes, source contradictions, and scope limitations.
-
-The Onafriq module follows the public B2B VAS Biller Aggregation Platform documentation reviewed on 18 July 2026. It implements the published `/services` bill-payment subset: biller discovery, balances, airtime, data, cable TV, electricity, e-pin/JAMB, betting, vehicle insurance, account lookup, transaction query, and requery. Fund transfer and international/remittance operations published in the same project are outside this bill-payment module. See `ONAFRIQ_BILL_PAYMENT_V1.md` for the route matrix, examples, source precedence, and limitations.
-
-Before integrating a real consumer, confirm each provider module against the specification and credentials assigned to that consumer:
-
-- endpoint paths and versions;
-- request and response fields, formats, and codes;
-- authentication, signatures, encryption, and certificate behavior;
-- duplicate, requery, reversal, and callback rules.
-
-The provider-neutral core does not need to change when those adapter contracts are corrected.
+- NIBSS: the institution WSDL and message-security specification, to replace the local HTTP XML transport with the production SOAP binding.
+- Onafriq: the HMAC signing specification.
+- Recorded sandbox responses, where available, for byte-level contract tests.
 
 ## Requirements and startup
 
@@ -47,11 +38,13 @@ Run the application:
 ./gradlew bootRun
 ```
 
-The default port is `8080`. Override it with `SERVER_PORT`, for example:
+`bootRun` listens on port `50001`; the Docker image listens on `8080`. Override either with `SERVER_PORT`, for example:
 
 ```shell
 SERVER_PORT=9090 ./gradlew bootRun
 ```
+
+The examples below use the container port `8080`.
 
 ### Docker
 
@@ -94,47 +87,50 @@ docker run --rm --name simulator \
 
 After default-port startup, open [Swagger UI](http://localhost:8080/swagger-ui.html) or check [Actuator health](http://localhost:8080/actuator/health). The container health check automatically follows the configured `SERVER_PORT`.
 
-Runtime configuration can be supplied with `--env`, an environment file through `--env-file`, or the equivalent environment settings in the container platform:
+## Configuration
 
-Provider configuration is grouped by provider ID in `application.yaml`. Shared metadata and provider-specific settings are colocated under `simulator.providers.<provider-id>`, with typed settings nested under `config`:
+Provider configuration is grouped by provider ID under `simulator.providers.<provider-id>` in `application.yaml`:
 
 ```yaml
 simulator:
   providers:
-    interswitch-transfer:
+    interswitch:
       enabled: true
-      specification-version: Quickteller Service API v5 public documentation
+      specification-version: Quickteller Service API v5 public documentation (Send Money, Bills Payment and Airtime)
       security-mode: oauth-client-credentials-and-bearer
+      base-path: ${INTERSWITCH_BASE_PATH:}
       config:
         client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
         client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
         access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
         token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
         terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
-    interswitch-bill-payment:
-      enabled: true
-      specification-version: Quickteller Bills Payment and Airtime API v5 public documentation
-      security-mode: shared-oauth-client-credentials-and-bearer
-    onafriq-bill-payment:
-      enabled: true
-      specification-version: Biller Aggregation Platform API v1.0.0 public documentation
-      security-mode: api-key
-      config:
-        api-key: ${ONAFRIQ_API_KEY:simulator-api-key}
 ```
 
-When adding a provider, add one entry at `simulator.providers.<provider-id>` and bind its module-specific properties class to `simulator.providers.<provider-id>.config`. A provider without custom settings can omit `config`. Keep secrets in environment variables rather than committing deployment values.
+| Setting | Purpose |
+|---|---|
+| `enabled` | `false` hides every route of the provider (HTTP `404`, no body) |
+| `base-path` | Optional prefix before the provider's specification paths, for example `/isw`. Use it only if two providers publish the same path; the client includes it in its base URL |
+| `profile` | Behavior applied to every operation of the provider that can express it |
+| `operation-profiles` | Behavior per operation, keyed by operation name |
+| `rules` | Test-data rules: when a request field equals a value, apply a profile |
+| `config` | Provider-specific settings, bound to a typed properties class |
+
+Startup fails when configuration names an unknown provider, operation, field, or profile, when a profile cannot be expressed by the provider specification, when a delay exceeds `simulator.limits.max-delay`, or when two providers map the same route.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SERVER_PORT` | `8080` | HTTP port used by the service inside the container |
+| `SERVER_PORT` | `50001` (`8080` in the image) | HTTP port |
 | `SIMULATOR_ADMIN_TOKEN` | `simulator` | Token required in `X-Admin-Token` for administration endpoints |
-| `INTERSWITCH_CLIENT_ID` | `simulator-client` | OAuth client ID accepted by the simulated Interswitch token endpoint |
-| `INTERSWITCH_CLIENT_SECRET` | `simulator-secret` | OAuth client secret accepted by the simulated Interswitch token endpoint |
-| `INTERSWITCH_ACCESS_TOKEN` | `simulator-access-token` | Bearer token returned and accepted by the simulated Interswitch API |
-| `INTERSWITCH_TOKEN_EXPIRES_IN` | `86400` | Simulated OAuth token lifetime in seconds |
-| `INTERSWITCH_TERMINAL_ID` | `3PBL0001` | Terminal ID required by the simulated Interswitch API |
-| `ONAFRIQ_API_KEY` | `simulator-api-key` | API key accepted in `x-api-key` or `Authorization: Api-key` by Onafriq operations |
+| `NIBSS_NIP_BASE_PATH` | empty | Optional NIBSS base path |
+| `INTERSWITCH_BASE_PATH` | empty | Optional Interswitch base path |
+| `ONAFRIQ_BASE_PATH` | empty | Optional Onafriq base path |
+| `INTERSWITCH_CLIENT_ID` | `simulator-client` | OAuth client ID accepted by the token endpoint |
+| `INTERSWITCH_CLIENT_SECRET` | `simulator-secret` | OAuth client secret accepted by the token endpoint |
+| `INTERSWITCH_ACCESS_TOKEN` | `simulator-access-token` | Bearer token returned and accepted by the Interswitch API |
+| `INTERSWITCH_TOKEN_EXPIRES_IN` | `86400` | Token lifetime in seconds |
+| `INTERSWITCH_TERMINAL_ID` | `3PBL0001` | The only `TerminalId` the Interswitch API accepts |
+| `ONAFRIQ_API_KEY` | `simulator-api-key` | API key accepted by Onafriq operations |
 | `JAVA_TOOL_OPTIONS` | JVM default | Optional JVM options such as memory limits |
 
 For example, place non-public local values in `~/.config/simulator/simulator.env`, outside the repository and image build context:
@@ -209,38 +205,21 @@ Run all tests:
 ./gradlew test
 ```
 
-## Available provider endpoints
+## Using several providers at once
 
-| Provider | Operation | Endpoint |
-|---|---|---|
-| NIBSS NIP | Name enquiry (010/011) | `POST /nip/v9.4/nameenquirysingle` |
-| NIBSS NIP | Direct-credit transfer (012/013) | `POST /nip/v9.4/fundtransfersingleitem_dc` |
-| NIBSS NIP | Direct-debit transfer (014/015) | `POST /nip/v9.4/fundtransfersingleitem_dd` |
-| NIBSS NIP | Transaction status query (016/017) | `POST /nip/v9.4/txnstatusquerysingleitem` |
-| NIBSS NIP | Balance enquiry (018/019) | `POST /nip/v9.4/balanceenquiry` |
-| NIBSS NIP | Direct-credit advice (020/021) | `POST /nip/v9.4/fundtransferAdvice_dc` |
-| NIBSS NIP | Direct-debit advice (022/023) | `POST /nip/v9.4/fundtransferAdvice_dd` |
-| Interswitch | Generate access token | `POST /passport/oauth/token` |
-| Interswitch | Account-name enquiry | `GET /quicktellerservice/api/v5/transactions/DoAccountNameInquiry` |
-| Interswitch | Fund-transfer banks | `GET /quicktellerservice/api/v5/configuration/fundstransferbanks` |
-| Interswitch | Transfer | `POST /quicktellerservice/api/v5/transactions/Transfer` |
-| Interswitch bills | Categories and billers | `GET /quicktellerservice/api/v5/services/categories`, `GET /quicktellerservice/api/v5/services?categoryId={id}` |
-| Interswitch bills | Payment items and customer validation | `GET /quicktellerservice/api/v5/services/options?serviceid={id}`, `POST /quicktellerservice/api/v5/Transactions/validatecustomers` |
-| Interswitch bills | Bill payment and airtime recharge | `POST /quicktellerservice/api/v5/Transactions` |
-| Interswitch | Transaction query | `GET /quicktellerservice/api/v5/Transactions?requestRef={reference}` |
-| Onafriq | Main/commission balance | `GET /services/superagent/balance`, `GET /services/superagent/commission-balance` |
-| Onafriq | Transaction lookup/requery | `GET /services/superagent/transaction`, `GET /services/superagent/transaction/requery` |
-| Onafriq | Biller discovery | `GET /services/billers/providers/all`, `GET /services/billers/category/all`, `GET /services/billers/services/category/{category}`, `GET /services/billers/services/provider/{provider}` |
-| Onafriq | Airtime | `GET /services/airtime/providers`, `POST /services/airtime/request` |
-| Onafriq | Data | `GET /services/data/providers`, `POST /services/data/bundles`, `POST /services/data/request` |
-| Onafriq | Cable TV | `GET /services/cabletv/providers`, `POST /services/cabletv/check-addons`, `POST /services/cabletv/request` |
-| Onafriq | Electricity | `GET /services/electricity/providers`, `POST /services/electricity/verify`, `POST /services/electricity/request` |
-| Onafriq | E-pin and JAMB | `GET /services/epin/providers`, `POST /services/epin/bundles`, `POST /services/epin/request`, `GET /services/epin/jamb-profiles`, `POST /services/epin/jamb-request` |
-| Onafriq | Betting | `GET /services/betting/providers`, `POST /services/betting/verify`, `POST /services/betting/request` |
-| Onafriq | Account finder | `POST /services/namefinder/query` |
-| Onafriq | Vehicle insurance | `GET /services/vehicle-insurance/providers`, `POST /services/vehicle-insurance/request` |
+Point each client integration at the simulator as that provider's base URL. All providers are served by the same process at their specification paths:
 
-Example NIBSS transfer:
+| Provider | Paths |
+|---|---|
+| NIBSS NIP | `/nip/v9.4/...` |
+| Interswitch | `/passport/oauth/token`, `/quicktellerservice/api/v5/...` |
+| Onafriq | `/services/...` |
+
+Transactions are keyed by provider and reference, so equal references used with different providers never collide. Behavior is selected per provider and per operation, so one provider can fail while another succeeds.
+
+## Provider examples
+
+NIBSS direct-credit transfer:
 
 ```shell
 curl --request POST http://localhost:8080/nip/v9.4/fundtransfersingleitem_dc \
@@ -265,56 +244,37 @@ curl --request POST http://localhost:8080/nip/v9.4/fundtransfersingleitem_dc \
   </FTSingleCreditRequest>'
 ```
 
-Generate the default local Interswitch access token:
+Interswitch access token, then transfer. The `mac` is the lowercase `SHA-512` digest of `100000566CA100000566ACNG` (secure-data version 12 field order):
 
 ```shell
 curl --request POST 'http://localhost:8080/passport/oauth/token' \
   --user 'simulator-client:simulator-secret' \
   --header 'Content-Type: application/x-www-form-urlencoded' \
   --data 'grant_type=client_credentials'
-```
 
-Example Interswitch transfer failure. The `MAC` is the lowercase `SHA-512` digest of `1250.50566CA1250.50566ACNG`, following secure-data version 12 field order:
-
-```shell
-curl --request POST http://localhost:8080/quicktellerservice/api/v5/transactions/Transfer \
+curl --request POST http://localhost:8080/quicktellerservice/api/v5/transactions/TransferFunds \
   --header 'Authorization: Bearer simulator-access-token' \
   --header 'TerminalId: 3PBL0001' \
   --header 'Content-Type: application/json' \
-  --header 'X-Simulation-Scenario: failure' \
   --data '{
-    "InitiatingEntityCode": "PBL",
-    "Initiation": {
-      "Amount": 1250.50,
-      "CurrencyCode": "566",
-      "PaymentMethodCode": "CA",
-      "Channel": "7"
+    "transferCode": "isw-reference-100",
+    "mac": "9f4e4f53c57be63e1f08d8f07a7bc1a9461e4a7d5304043daa1ef54bd727b6cde148f4fbfc5e2ad8c4a60f78dfa76304de671fbeb70657b1628f14b6b6baa5e1",
+    "termination": {
+      "amount": "100000",
+      "accountReceivable": {"accountNumber": "3001155245", "accountType": "00"},
+      "entityCode": "044",
+      "currencyCode": "566",
+      "paymentMethodCode": "AC",
+      "countryCode": "NG"
     },
-    "Termination": {
-      "Amount": 1250.50,
-      "CurrencyCode": "566",
-      "PaymentMethodCode": "AC",
-      "CountryCode": "NG",
-      "AccountReceivable": {
-        "AccountNumber": "0123456789",
-        "AccountType": "00"
-      },
-      "EntityCode": "058"
-    },
-    "sender": {
-      "lastname": "DOE",
-      "othernames": "JANE"
-    },
-    "Beneficiary": {
-      "lastname": "SMITH",
-      "othernames": "JOHN"
-    },
-    "TransferCode": "isw-reference-100",
-    "MAC": "afb1b1ca97390dc060e7c12aca6090ddb00b868c8f24c2e3ac49a03b88b161cc4f5d3a6f58c0be106e4d6527e410bd986d40ddd5348d37e89b949065e17d6a8f"
+    "sender": {"phone": "08124888436", "email": "jane@example.com", "lastname": "Doe", "othernames": "Jane"},
+    "initiatingEntityCode": "PBL",
+    "initiation": {"amount": "100000", "currencyCode": "566", "paymentMethodCode": "CA", "channel": "7"},
+    "beneficiary": {"lastname": "Smith", "othernames": "John"}
   }'
 ```
 
-Example Interswitch MTN airtime recharge. Amounts are in kobo and the body `TerminalId` must match the header:
+Interswitch MTN airtime recharge (amounts in kobo):
 
 ```shell
 curl --request POST http://localhost:8080/quicktellerservice/api/v5/Transactions \
@@ -322,17 +282,15 @@ curl --request POST http://localhost:8080/quicktellerservice/api/v5/Transactions
   --header 'TerminalId: 3PBL0001' \
   --header 'Content-Type: application/json' \
   --data '{
-    "TerminalId": "3PBL0001",
     "paymentCode": "628051043",
-    "customerId": "234805673157",
-    "customerMobile": "234805673157",
-    "customerEmail": "customer@example.com",
+    "customerId": "2348056731576",
+    "customerMobile": "2348056731576",
     "amount": "50000",
     "requestReference": "airtime-local-001"
   }'
 ```
 
-Example Onafriq airtime purchase using the default local API key:
+Onafriq airtime purchase and requery:
 
 ```shell
 curl --request POST http://localhost:8080/services/airtime/request \
@@ -346,93 +304,116 @@ curl --request POST http://localhost:8080/services/airtime/request \
     "agentId": "205",
     "agentReference": "onafriq-airtime-100"
   }'
-```
 
-Requery the same purchase with:
-
-```shell
 curl --get http://localhost:8080/services/superagent/transaction/requery \
   --header 'x-api-key: simulator-api-key' \
   --data-urlencode 'agentReference=onafriq-airtime-100'
 ```
 
-## Scenarios
+## Selecting provider behavior
 
-Use `X-Simulation-Scenario` on a provider request to select a behavior for that request. If omitted, the currently active profile is used; the startup profile is `happy-path`, whose scenario is `success`. Swagger UI presents the supported values as a dropdown and preselects `success`.
+Provider requests never carry simulator parameters. Behavior is a named **profile** selected through the Admin API or configuration.
 
-| Value | Behavior |
+| Profile | Behavior |
 |---|---|
-| `success` | Immediate successful result |
-| `failure` | Immediate provider-declared failure |
-| `pending` | Pending result, then in-memory success |
-| `delayed-success` | Wait for the configured delay, then succeed |
-| `timeout` | Hold for the configured safety-bounded duration, then return HTTP `504` |
-| `event-timeout` | Remain pending without a completion event |
-| `late-event` | Remain pending until the longer configured transition delay, then complete |
+| `happy-path` | Success (the default) |
+| `failure` | Provider-declared failure |
+| `delayed-success` | Success after a 3-second hold |
+| `pending` | Pending response; the transaction completes as success after 5 seconds |
+| `pending-then-failed` | Pending response; completes as failed |
+| `pending-then-reversed` | Pending response; completes as reversed (only where the provider can report reversals) |
+| `pending-forever` | Pending response; never completes |
+| `timeout` | No response: the connection is held for 60 seconds and closed without any bytes; the provider recorded the request and later queries report success |
+| `timeout-then-failed` | No response; later queries report failure |
+| `timeout-not-received` | No response; the provider has no record, so queries report not found |
 
-Profile delays and limits are configured under `simulator` in `application.yaml`. Startup fails when a delay is negative or exceeds `simulator.limits.max-delay`. Concurrent held requests and queued completion events are bounded.
+Profiles are defined under `simulator.profiles` with `outcome` (`success`, `failure`, `pending`, `timeout`), `delay`, `completes-as` (`success`, `failed`, `reversed`, `never`), `transition-delay`, and `received`. Set a timeout `delay` above your client's read timeout. Delays are capped by `simulator.limits.max-delay` (2 minutes).
+
+A profile can only be applied where the provider specification can express it. For example, NIBSS has no code for a reversed transaction, so `pending-then-reversed` is rejected for NIBSS transfers, and name enquiries cannot be pending. `GET /admin/providers` lists each operation's supported outcomes, query statuses, and match fields.
+
+Selection precedence, highest first:
+
+1. a one-time override for a provider reference;
+2. an override for the next N requests of a provider operation (or of any operation of the provider);
+3. a test-data rule on a request field, named as in the specification;
+4. the operation profile;
+5. the provider profile (applied only to operations that can express it);
+6. the default profile, `happy-path`.
 
 ## Administration
 
-The Admin API is the simulator control plane. It is used to discover configured providers, change default behavior, force a scenario for one reference, inspect temporary transaction state, and reset the simulator between tests. It is not part of either provider contract, and `X-Admin-Token` must not be sent to NIBSS or Interswitch endpoints.
+The Admin API is the simulator control plane. It is not part of any provider contract.
 
-Every `/admin/**` request requires `X-Admin-Token`. The default local token is `simulator`; override it with `SIMULATOR_ADMIN_TOKEN`, especially when the service is reachable by other users. In Swagger UI, select **Authorize**, enter only the token in `AdminToken`, and then invoke an administration operation.
+Every `/admin/**` request requires `X-Admin-Token`. The default local token is `simulator`; override it with `SIMULATOR_ADMIN_TOKEN`, especially when the service is reachable by other users.
 
-| Purpose | Endpoint | Result |
-|---|---|---|
-| Discover providers | `GET /admin/providers` | Lists provider IDs, enabled state, specification version, and security mode |
-| Discover profiles | `GET /admin/profiles` | Returns the active profile and all available profiles |
-| Change default behavior | `PUT /admin/profiles/{profile}/activate` | Makes the selected profile apply when a provider request has no scenario header or override |
-| Force one reference | `POST /admin/overrides` | Stores a TTL-bound, one-time provider/reference scenario override |
-| Inspect temporary state | `GET /admin/transactions/{provider}/{reference}` | Returns the in-memory transaction or HTTP `404` when it does not exist or has expired |
-| Return to a clean state | `POST /admin/state/reset` or `DELETE /admin/state` | Clears transactions and overrides and cancels queued transitions |
+| Purpose | Endpoint |
+|---|---|
+| Providers, operations, capabilities, and assignments | `GET /admin/providers` |
+| Profiles | `GET /admin/profiles` |
+| Provider profile | `PUT` / `DELETE /admin/providers/{provider}/profile` |
+| Operation profile | `PUT` / `DELETE /admin/providers/{provider}/operations/{operation}/profile` |
+| Overrides | `POST` / `GET /admin/overrides`, `DELETE /admin/overrides/{id}` |
+| Test-data rules | `POST` / `GET /admin/rules`, `DELETE /admin/rules/{id}` |
+| Inspect a transaction | `GET /admin/transactions/{provider}/{reference}` |
+| Reset | `POST /admin/state/reset` or `DELETE /admin/state` |
 
-List the available providers:
-
-```shell
-curl http://localhost:8080/admin/providers \
-  --header 'X-Admin-Token: simulator'
-```
-
-Activate the failure profile for provider requests that do not explicitly select a scenario:
+Make every NIBSS operation fail while Interswitch keeps succeeding:
 
 ```shell
-curl --request PUT http://localhost:8080/admin/profiles/failure/activate \
-  --header 'X-Admin-Token: simulator'
+curl --request PUT http://localhost:8080/admin/providers/nibss-nip/profile \
+  --header 'X-Admin-Token: simulator' \
+  --header 'Content-Type: application/json' \
+  --data '{"profile": "failure"}'
 ```
 
-Example one-time override:
+Time out the next Interswitch transfer, whatever reference the client generates:
 
 ```shell
 curl --request POST http://localhost:8080/admin/overrides \
-  --header 'Content-Type: application/json' \
   --header 'X-Admin-Token: simulator' \
-  --data '{
-    "provider": "nibss-nip",
-    "reference": "nip-reference-200",
-    "scenario": "FAILURE"
-  }'
+  --header 'Content-Type: application/json' \
+  --data '{"provider": "interswitch", "operation": "transfer", "profile": "timeout", "count": 1}'
 ```
 
-Use `nibss-nip`, `interswitch-transfer`, or `interswitch-bill-payment` as the provider value. The transaction reference is the NIBSS `SessionID` or the Interswitch request reference used by the simulated operation.
+Fail one known reference:
 
-Scenario selection precedence is: one-time admin override, `X-Simulation-Scenario`, then the active profile. An override is consumed once and expires from bounded memory if it is not used. Profiles remain active until changed or the application restarts; all transaction and override state is intentionally ephemeral.
+```shell
+curl --request POST http://localhost:8080/admin/overrides \
+  --header 'X-Admin-Token: simulator' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider": "onafriq-bill-payment", "reference": "onafriq-airtime-100", "profile": "failure"}'
+```
 
-Reset state between test runs when a clean simulator is required:
+Fail every NIBSS name enquiry for one account number:
+
+```shell
+curl --request POST http://localhost:8080/admin/rules \
+  --header 'X-Admin-Token: simulator' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider": "nibss-nip", "operation": "name-enquiry", "field": "AccountNumber", "equals": "0000000001", "profile": "failure"}'
+```
+
+Reset between test runs:
 
 ```shell
 curl --request POST http://localhost:8080/admin/state/reset \
   --header 'X-Admin-Token: simulator'
 ```
 
+Reset clears transactions, overrides, and queued transitions, and restores the configured profiles and rules.
+
+## Observability
+
+`/actuator/health` and `/actuator/metrics` are exposed. `simulator.simulations` counts simulated operations by `provider`, `operation`, `profile`, `source`, and `outcome`; `simulator.duplicates` counts duplicate references; `simulator.held.requests` reports requests currently held by delays or timeouts. Logs record the same dimensions and never request field values.
+
 ## Storage and lifecycle
 
-- Runtime transactions and overrides use thread-safe, size-bounded, TTL in-memory stores.
-- Provider and reference together form a transaction key, so equal references from different providers remain isolated.
-- Concurrent creation of the same provider/reference is atomic; only one transfer is created.
-- Duplicate requests return provider-specific responses; Interswitch uses documented response code `90094`.
-- Admin reset clears transactions and overrides and cancels queued transitions.
-- Restarting the process intentionally loses all runtime state and pending events.
+- Runtime transactions, overrides, and rules use thread-safe, size-bounded, in-memory stores; transactions and overrides expire.
+- Provider and reference together form a transaction key.
+- Concurrent creation of the same provider/reference is atomic; only one transaction is created and repeats receive the provider's duplicate response.
+- A transaction is recorded when the request is received, so a client that times out and then queries sees the provider's recorded state.
+- Capacity exhaustion returns a bare HTTP `503`; unmatched routes return a bare `404`.
+- Restarting the process intentionally loses all runtime state and pending transitions.
 - Multiple instances must not share stateful flows unless requests use sticky routing. No database or distributed cache is supported by design.
 
 See `ARCHITECTURE.md` for the complete design and provider-onboarding path.

@@ -5,6 +5,12 @@ spring:
   application:
     name: simulator
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
@@ -15,68 +21,74 @@ springdoc:
 simulator:
   default-profile: happy-path
   admin-token: ${SIMULATOR_ADMIN_TOKEN:simulator}
-  allowed-callback-hosts:
-    - localhost
-    - 127.0.0.1
   limits:
     max-transactions: 1000
     max-overrides: 100
+    max-rules: 100
     max-held-requests: 20
     scheduler-threads: 2
     transaction-ttl: 15m
     override-ttl: 5m
-    max-delay: 30s
+    max-delay: 2m
+  # Named behaviors. Select them per provider, per operation, per reference, or per request field value through
+  # the admin API or the provider settings below. Provider requests never carry simulator parameters.
   profiles:
     happy-path:
-      scenario: success
-      delay: 0ms
-      transition-delay: 100ms
+      outcome: success
     failure:
-      scenario: failure
-      delay: 0ms
-      transition-delay: 100ms
-    pending:
-      scenario: pending
-      delay: 0ms
-      transition-delay: 1s
+      outcome: failure
     delayed-success:
-      scenario: delayed-success
-      delay: 250ms
-      transition-delay: 100ms
-    timeout:
-      scenario: timeout
-      delay: 5s
-      transition-delay: 100ms
-    event-timeout:
-      scenario: event-timeout
-      delay: 0ms
-      transition-delay: 1s
-    late-event:
-      scenario: late-event
-      delay: 0ms
+      outcome: success
+      delay: 3s
+    pending:
+      outcome: pending
+      completes-as: success
       transition-delay: 5s
+    pending-then-failed:
+      outcome: pending
+      completes-as: failed
+      transition-delay: 5s
+    pending-then-reversed:
+      outcome: pending
+      completes-as: reversed
+      transition-delay: 5s
+    pending-forever:
+      outcome: pending
+      completes-as: never
+    # The client receives no response. Set delay above the client's read timeout.
+    timeout:
+      outcome: timeout
+      delay: 60s
+      completes-as: success
+    timeout-then-failed:
+      outcome: timeout
+      delay: 60s
+      completes-as: failed
+    timeout-not-received:
+      outcome: timeout
+      delay: 60s
+      received: false
   providers:
     nibss-nip:
       enabled: true
       specification-version: NIP v9.4
       security-mode: not-configured-wsdl-security-not-supplied
-    interswitch-transfer:
+      base-path: ${NIBSS_NIP_BASE_PATH:}
+    interswitch:
       enabled: true
-      specification-version: Quickteller Service API v5 public documentation
+      specification-version: Quickteller Service API v5 public documentation (Send Money, Bills Payment and Airtime)
       security-mode: oauth-client-credentials-and-bearer
+      base-path: ${INTERSWITCH_BASE_PATH:}
       config:
         client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
         client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
         access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
         token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
         terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
-    interswitch-bill-payment:
-      enabled: true
-      specification-version: Quickteller Bills Payment and Airtime API v5 public documentation
-      security-mode: shared-oauth-client-credentials-and-bearer
     onafriq-bill-payment:
       enabled: true
       specification-version: Biller Aggregation Platform API v1.0.0 public documentation
       security-mode: api-key
+      base-path: ${ONAFRIQ_BASE_PATH:}
       config:
         api-key: ${ONAFRIQ_API_KEY:simulator-api-key}

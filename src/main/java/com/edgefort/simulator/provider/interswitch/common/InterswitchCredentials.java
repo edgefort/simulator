@@ -1,6 +1,5 @@
-package com.edgefort.simulator.provider.interswitch.transfer.security;
+package com.edgefort.simulator.provider.interswitch.common;
 
-import com.edgefort.simulator.provider.interswitch.transfer.config.InterswitchTransferProperties;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -10,9 +9,9 @@ import java.util.Base64;
 @Component
 public class InterswitchCredentials {
 
-    private final InterswitchTransferProperties properties;
+    private final InterswitchProperties properties;
 
-    public InterswitchCredentials(InterswitchTransferProperties properties) {
+    public InterswitchCredentials(InterswitchProperties properties) {
         this.properties = properties;
     }
 
@@ -25,19 +24,18 @@ public class InterswitchCredentials {
                     Base64.getDecoder().decode(authorization.substring("Basic ".length())),
                     StandardCharsets.UTF_8
             );
-            return constantTimeEquals(
-                    decoded,
-                    properties.getClientId() + ":" + properties.getClientSecret()
-            );
+            return constantTimeEquals(decoded, properties.getClientId() + ":" + properties.getClientSecret());
         } catch (IllegalArgumentException exception) {
             return false;
         }
     }
 
-    public boolean acceptsBearerAuthorization(String authorization) {
-        return authorization != null
-                && authorization.startsWith("Bearer ")
-                && constantTimeEquals(authorization.substring("Bearer ".length()), properties.getAccessToken());
+    public boolean acceptsBearerToken(String token) {
+        return constantTimeEquals(token, properties.getAccessToken());
+    }
+
+    public boolean acceptsTerminal(String terminalId) {
+        return properties.getTerminalId().equals(terminalId);
     }
 
     public String accessToken() {

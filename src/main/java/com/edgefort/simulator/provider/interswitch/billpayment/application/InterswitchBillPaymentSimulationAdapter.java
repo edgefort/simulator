@@ -1,10 +1,14 @@
 package com.edgefort.simulator.provider.interswitch.billpayment.application;
 
-import com.edgefort.simulator.config.SimulationProperties;
-import com.edgefort.simulator.core.application.TransferCommand;
-import com.edgefort.simulator.core.application.TransferSimulationResult;
-import com.edgefort.simulator.core.application.TransferSimulationService;
-import com.edgefort.simulator.core.state.TransactionStatus;
+import com.edgefort.simulator.core.application.ProviderOperationSimulator;
+import com.edgefort.simulator.core.application.TransactionCommand;
+import com.edgefort.simulator.core.application.TransactionSimulationResult;
+import com.edgefort.simulator.core.application.TransactionSimulationService;
+import com.edgefort.simulator.core.scenario.SimulationOutcome;
+import com.edgefort.simulator.core.state.SimulatedTransaction;
+import com.edgefort.simulator.provider.interswitch.InterswitchApiException;
+import com.edgefort.simulator.provider.interswitch.InterswitchProvider;
+import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.BillPaymentDetails;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.Biller;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.BillerCategory;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.BillerList;
@@ -20,6 +24,7 @@ import com.edgefort.simulator.provider.interswitch.billpayment.contract.Interswi
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.PaymentResponse;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.TransactionQueryResponse;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.ValidatedCustomer;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -27,23 +32,39 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.LinkedHashMap;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 
 @Service
 public class InterswitchBillPaymentSimulationAdapter {
 
-    public static final String PROVIDER_ID = "interswitch-bill-payment";
-
     private static final String SUCCESS_CODE = "90000";
+    private static final String CUSTOMER_NOT_FOUND_CODE = "90002";
+    private static final String INVALID_AMOUNT_CODE = "90003";
+    private static final String DUPLICATE_CODE = "90005";
+    private static final String SERVICE_UNAVAILABLE_CODE = "90006";
+    private static final String INVALID_PAYMENT_CODE = "90007";
+    private static final String VALIDATION_FAILED_CODE = "90008";
+    private static final String IN_PROGRESS_CODE = "90009";
     private static final String SUCCESS_GROUP = "SUCCESSFUL";
     private static final String FAILED_GROUP = "FAILED";
     private static final String PENDING_GROUP = "PENDING";
+
+    private static final String PAYMENT_CODE = "paymentCode";
+    private static final String CUSTOMER_ID = "customerId";
+    private static final String CUSTOMER_MOBILE = "customerMobile";
+    private static final String CUSTOMER_EMAIL = "customerEmail";
+    private static final String TRANSACTION_REF = "TransactionRef";
+    private static final String RECHARGE_PIN = "RechargePIN";
+
+    private static final DateTimeFormatter PAYMENT_DATE = DateTimeFormatter
+            .ofPattern("M/d/yyyy h:mm:ss a", Locale.ENGLISH)
+            .withZone(ZoneId.of("Africa/Lagos"));
+
     private static final List<Category> CATEGORIES = List.of(
             new Category(1, "Utility Bills", "Electricity and other utility payments"),
             new Category(4, "Mobile/Recharge", "Mobile airtime and recharge services")
@@ -74,35 +95,34 @@ public class InterswitchBillPaymentSimulationAdapter {
             )
     );
 
-    private final TransferSimulationService transferService;
-    private final Clock clock;
-    private final int maxTransactions;
-    private final Duration transactionTtl;
-    private final Map<String, PaymentSnapshot> snapshots = new LinkedHashMap<>();
+    private final ProviderOperationSimulator operationSimulator;
+    private final TransactionSimulationService transactionService;
 
     public InterswitchBillPaymentSimulationAdapter(
-            TransferSimulationService transferService,
-            SimulationProperties properties,
-            Clock clock
+            ProviderOperationSimulator operationSimulator,
+            TransactionSimulationService transactionService
     ) {
-        this.transferService = transferService;
-        this.clock = clock;
-        this.maxTransactions = properties.getLimits().getMaxTransactions();
-        this.transactionTtl = properties.getLimits().getTransactionTtl();
+        this.operationSimulator = operationSimulator;
+        this.transactionService = transactionService;
     }
 
     public CategoriesResponse categories() {
         return new CategoriesResponse(CATEGORIES, SUCCESS_CODE, SUCCESS_GROUP);
     }
 
-    public BillersResponse billers(int categoryId) {
-        Optional<Category> category = CATEGORIES.stream().filter(item -> item.Id() == categoryId).findFirst();
-        List<BillerCategory> categoryList = category.map(value -> List.of(new BillerCategory(
-                value.Id(), value.Name(), PRODUCTS.entrySet().stream()
-                        .filter(entry -> entry.getValue().categoryId() == categoryId)
+    /**
+     * Billers of one category, or of every category when {@code categoryId} is absent.
+     */
+    public BillersResponse billers(Integer categoryId) {
+        List<BillerCategory> categoryList = CATEGORIES.stream()
+                .filter(category -> categoryId == null || category.Id() == categoryId)
+                .map(category -> new BillerCategory(
+                        category.Id(), category.Name(), PRODUCTS.entrySet().stream()
+                        .filter(entry -> entry.getValue().categoryId() == category.Id())
                         .map(entry -> toBiller(entry.getKey(), entry.getValue()))
                         .toList()
-        ))).orElseGet(List::of);
+                ))
+                .toList();
         int count = categoryList.stream().mapToInt(item -> item.Billers().size()).sum();
         return new BillersResponse(new BillerList(count, categoryList), SUCCESS_CODE, SUCCESS_GROUP);
     }
@@ -115,88 +135,128 @@ public class InterswitchBillPaymentSimulationAdapter {
         return new PaymentItemsResponse(items, SUCCESS_CODE, SUCCESS_GROUP);
     }
 
-    public CustomerValidationResponse validateCustomers(CustomerValidationRequest request) {
+    /**
+     * Validates each customer entry. Each entry with a known payment code is one {@code customer-validation}
+     * simulation.
+     *
+     * @param terminalId the {@code TerminalId} header, already verified against the configured terminal
+     */
+    public CustomerValidationResponse validateCustomers(CustomerValidationRequest request, String terminalId) {
+        requireSameTerminal(request.TerminalId(), terminalId);
         List<ValidatedCustomer> customers = request.customers().stream()
-                .map(customer -> validateCustomer(request.TerminalId(), customer))
+                .map(customer -> validateCustomer(terminalId, customer))
                 .toList();
         boolean allValid = customers.stream().allMatch(customer -> SUCCESS_CODE.equals(customer.ResponseCode()));
         return new CustomerValidationResponse(
                 customers,
-                allValid ? SUCCESS_CODE : "90008",
+                allValid ? SUCCESS_CODE : VALIDATION_FAILED_CODE,
                 allValid ? SUCCESS_GROUP : FAILED_GROUP
         );
     }
 
-    public PaymentResponse pay(PaymentRequest request, String terminalId, String scenario) {
+    /**
+     * @param terminalId the {@code TerminalId} header, already verified against the configured terminal
+     */
+    public PaymentResponse pay(PaymentRequest request, String terminalId) {
+        if (request.TerminalId() != null) {
+            requireSameTerminal(request.TerminalId(), terminalId);
+        }
         PaymentProduct product = PRODUCTS.get(request.paymentCode());
         if (product == null) {
-            return response(null, null, request.amount(), "90007", "Invalid payment code", FAILED_GROUP);
+            return response(null, request.amount(), INVALID_PAYMENT_CODE, "Invalid payment code", FAILED_GROUP);
         }
         if (request.amount().compareTo(product.minimumAmount()) < 0
                 || product.maximumAmount() != null && request.amount().compareTo(product.maximumAmount()) > 0) {
-            return response(null, null, request.amount(), "90003", "Invalid amount", FAILED_GROUP);
+            return response(null, request.amount(), INVALID_AMOUNT_CODE, "Invalid amount", FAILED_GROUP);
         }
 
-        TransferSimulationResult result = transferService.simulate(new TransferCommand(
-                PROVIDER_ID,
-                product.categoryId() == 4 ? "airtime-recharge" : "bill-payment",
+        TransactionSimulationResult result = transactionService.simulate(new TransactionCommand(
+                InterswitchProvider.ID,
+                InterswitchProvider.BILL_PAYMENT,
                 request.requestReference(),
                 request.amount(),
-                null
-        ), scenario);
-
-        String transactionReference = transactionReference(terminalId, product, request.requestReference());
-        String rechargePin = product.pinBased() ? rechargePin(request.requestReference()) : null;
-        if (!result.duplicate()) {
-            saveSnapshot(new PaymentSnapshot(
-                    request.requestReference(), transactionReference, request.paymentCode(), request.customerId(),
-                    request.amount(), rechargePin, result.status(), clock.instant()
-            ));
-        }
+                attributes(request, terminalId, product)
+        ));
+        SimulatedTransaction transaction = result.transaction();
+        String transactionRef = transaction.attributes().get(TRANSACTION_REF);
         if (result.duplicate()) {
-            return response(transactionReference, null, request.amount(), "90005", "Duplicate transaction", FAILED_GROUP);
+            return response(transactionRef, request.amount(), DUPLICATE_CODE, "Duplicate transaction", FAILED_GROUP);
         }
-        if (result.timeout()) {
-            return response(transactionReference, null, request.amount(), "SIMULATOR_TIMEOUT", "Timed out", PENDING_GROUP);
-        }
-        return switch (result.status()) {
-            case SUCCESS -> successResponse(transactionReference, rechargePin, request, product);
-            case FAILED -> response(transactionReference, null, request.amount(), "90006", "Service unavailable", FAILED_GROUP);
-            case PENDING -> response(transactionReference, null, request.amount(), "90009", "Request is being processed", PENDING_GROUP);
+        return switch (transaction.status()) {
+            case SUCCESS -> successResponse(transaction, product);
+            case FAILED -> response(
+                    transactionRef, request.amount(), SERVICE_UNAVAILABLE_CODE, "Service unavailable", FAILED_GROUP
+            );
+            case PENDING -> response(
+                    transactionRef, request.amount(), IN_PROGRESS_CODE, "Request in progress", PENDING_GROUP
+            );
+            case REVERSED -> throw new IllegalStateException("A new payment cannot be reversed when it is received");
         };
     }
 
-    public Optional<TransactionQueryResponse> query(String requestReference) {
-        PaymentSnapshot snapshot = findSnapshot(requestReference);
-        if (snapshot == null) {
-            return Optional.empty();
-        }
-        Optional<TransactionStatus> currentStatus = transferService.find(PROVIDER_ID, requestReference)
-                .map(transaction -> transaction.status());
-        if (currentStatus.isEmpty()) {
-            return Optional.empty();
-        }
-        TransactionStatus status = currentStatus.get();
-        String responseCode = switch (status) {
-            case SUCCESS -> SUCCESS_CODE;
-            case FAILED -> "90006";
-            case PENDING -> "90009";
-        };
-        String responseMessage = switch (status) {
-            case SUCCESS -> "Success";
-            case FAILED -> "Service unavailable";
-            case PENDING -> "Request is being processed";
-        };
-        String statusName = switch (status) {
+    /**
+     * Renders a recorded bill payment in the published Query Transaction response.
+     */
+    public TransactionQueryResponse query(SimulatedTransaction transaction) {
+        Map<String, String> attributes = transaction.attributes();
+        String paymentCode = attributes.get(PAYMENT_CODE);
+        PaymentProduct product = PRODUCTS.get(paymentCode);
+        String billerId = Integer.toString(product.billerId());
+        String status = switch (transaction.status()) {
             case SUCCESS -> "Completed";
-            case FAILED -> "Failed";
             case PENDING -> "Pending";
+            case FAILED -> "Failed";
+            case REVERSED -> "Reversed";
         };
-        return Optional.of(new TransactionQueryResponse(
-                snapshot.requestReference(), snapshot.transactionReference(), snapshot.serviceCode(),
-                snapshot.customerId(), amount(snapshot.amount()), statusName, responseCode, responseMessage,
-                "BillPayment", status == TransactionStatus.SUCCESS ? snapshot.rechargePin() : null
-        ));
+        String responseCode = switch (transaction.status()) {
+            case SUCCESS -> SUCCESS_CODE;
+            case PENDING -> IN_PROGRESS_CODE;
+            case FAILED -> SERVICE_UNAVAILABLE_CODE;
+            case REVERSED -> null;
+        };
+        return new TransactionQueryResponse(
+                new BillPaymentDetails(
+                        product.shortName(), attributes.get(CUSTOMER_ID), null, product.name(), paymentCode, billerId
+                ),
+                amount(transaction.amount()),
+                "566",
+                attributes.get(CUSTOMER_ID),
+                attributes.get(CUSTOMER_EMAIL),
+                attributes.get(CUSTOMER_MOBILE),
+                PAYMENT_DATE.format(transaction.createdAt()),
+                transaction.key().reference(),
+                paymentCode,
+                product.name(),
+                billerId,
+                status,
+                "0",
+                attributes.get(TRANSACTION_REF),
+                responseCode,
+                "BillPayment"
+        );
+    }
+
+    private Map<String, String> attributes(PaymentRequest request, String terminalId, PaymentProduct product) {
+        Map<String, String> attributes = new HashMap<>();
+        attributes.put(PAYMENT_CODE, request.paymentCode());
+        attributes.put(CUSTOMER_ID, request.customerId());
+        attributes.put(CUSTOMER_MOBILE, request.customerMobile());
+        if (request.customerEmail() != null) {
+            attributes.put(CUSTOMER_EMAIL, request.customerEmail());
+        }
+        attributes.put("amount", request.amount().toPlainString());
+        attributes.put("TerminalId", terminalId);
+        attributes.put(TRANSACTION_REF, transactionReference(terminalId, product, request.requestReference()));
+        if (product.pinBased()) {
+            attributes.put(RECHARGE_PIN, rechargePin(request.requestReference()));
+        }
+        return attributes;
+    }
+
+    private void requireSameTerminal(String bodyTerminalId, String headerTerminalId) {
+        if (!headerTerminalId.equals(bodyTerminalId)) {
+            throw new InterswitchApiException(HttpStatus.BAD_REQUEST, "70012", "Unrecognized terminal owner");
+        }
     }
 
     private Biller toBiller(String paymentCode, PaymentProduct product) {
@@ -221,10 +281,16 @@ public class InterswitchBillPaymentSimulationAdapter {
     private ValidatedCustomer validateCustomer(String terminalId, CustomerToValidate customer) {
         PaymentProduct product = PRODUCTS.get(customer.PaymentCode());
         if (product == null) {
-            return new ValidatedCustomer(
-                    terminalId, 0, customer.PaymentCode(), customer.CustomerId(), null, "90007", null,
-                    BigDecimal.ZERO, 0, null, BigDecimal.ZERO, null, null, null, null, null, null, null, null, null
-            );
+            return invalidCustomer(terminalId, 0, customer, INVALID_PAYMENT_CODE);
+        }
+        SimulationOutcome outcome = operationSimulator.simulate(
+                InterswitchProvider.ID,
+                InterswitchProvider.CUSTOMER_VALIDATION,
+                null,
+                Map.of("PaymentCode", customer.PaymentCode(), "CustomerId", customer.CustomerId())
+        );
+        if (outcome != SimulationOutcome.SUCCESS) {
+            return invalidCustomer(terminalId, product.billerId(), customer, CUSTOMER_NOT_FOUND_CODE);
         }
         boolean details = customer.WithDetails();
         return new ValidatedCustomer(
@@ -239,22 +305,31 @@ public class InterswitchBillPaymentSimulationAdapter {
         );
     }
 
-    private PaymentResponse successResponse(
-            String transactionReference,
-            String rechargePin,
-            PaymentRequest request,
-            PaymentProduct product
+    private ValidatedCustomer invalidCustomer(
+            String terminalId,
+            int billerId,
+            CustomerToValidate customer,
+            String responseCode
     ) {
+        return new ValidatedCustomer(
+                terminalId, billerId, customer.PaymentCode(), customer.CustomerId(), null, responseCode, null,
+                BigDecimal.ZERO, 0, null, BigDecimal.ZERO, null, null, null, null, null, null, null, null, null
+        );
+    }
+
+    private PaymentResponse successResponse(SimulatedTransaction transaction, PaymentProduct product) {
+        Map<String, String> attributes = transaction.attributes();
+        String rechargePin = attributes.get(RECHARGE_PIN);
         Map<String, String> additionalInfo = product.categoryId() == 4
                 ? Map.of(
                         "network", product.networkName(),
-                        "phoneNumber", request.customerId(),
-                        "amountCredited", request.amount().movePointLeft(2).setScale(2).toPlainString()
+                        "phoneNumber", attributes.get(CUSTOMER_ID),
+                        "amountCredited", transaction.amount().movePointLeft(2).setScale(2).toPlainString()
                 )
                 : Map.of("Pin", rechargePin, "Token", rechargePin, "Units", "55.9");
         String tokenDetails = rechargePin == null ? null : "Pin:" + rechargePin + ";Units:55.9;Token:" + rechargePin;
         return new PaymentResponse(
-                transactionReference, rechargePin, tokenDetails, amount(request.amount()), tokenDetails,
+                attributes.get(TRANSACTION_REF), rechargePin, tokenDetails, amount(transaction.amount()), tokenDetails,
                 additionalInfo, SUCCESS_CODE, "Success", SUCCESS_GROUP
         );
     }
@@ -269,14 +344,13 @@ public class InterswitchBillPaymentSimulationAdapter {
 
     private PaymentResponse response(
             String transactionReference,
-            String rechargePin,
             BigDecimal approvedAmount,
             String code,
             String description,
             String grouping
     ) {
         return new PaymentResponse(
-                transactionReference, rechargePin, null, amount(approvedAmount), null,
+                transactionReference, null, null, amount(approvedAmount), null,
                 Map.of(), code, description, grouping
         );
     }
@@ -300,25 +374,6 @@ public class InterswitchBillPaymentSimulationAdapter {
         return value.stripTrailingZeros().toPlainString();
     }
 
-    private synchronized void saveSnapshot(PaymentSnapshot snapshot) {
-        removeExpired();
-        while (snapshots.size() >= maxTransactions) {
-            String oldestReference = snapshots.keySet().iterator().next();
-            snapshots.remove(oldestReference);
-        }
-        snapshots.put(snapshot.requestReference(), snapshot);
-    }
-
-    private synchronized PaymentSnapshot findSnapshot(String requestReference) {
-        removeExpired();
-        return snapshots.get(requestReference);
-    }
-
-    private void removeExpired() {
-        Instant cutoff = clock.instant().minus(transactionTtl);
-        snapshots.values().removeIf(snapshot -> snapshot.createdAt().isBefore(cutoff));
-    }
-
     private record PaymentProduct(
             int billerId,
             int categoryId,
@@ -334,18 +389,6 @@ public class InterswitchBillPaymentSimulationAdapter {
             String networkName,
             String networkId,
             String type
-    ) {
-    }
-
-    private record PaymentSnapshot(
-            String requestReference,
-            String transactionReference,
-            String serviceCode,
-            String customerId,
-            BigDecimal amount,
-            String rechargePin,
-            TransactionStatus initialStatus,
-            Instant createdAt
     ) {
     }
 }

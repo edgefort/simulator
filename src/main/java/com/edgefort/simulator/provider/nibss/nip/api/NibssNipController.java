@@ -15,21 +15,22 @@ import com.edgefort.simulator.provider.nibss.nip.contract.NibssNipContracts.Name
 import com.edgefort.simulator.provider.nibss.nip.contract.NibssNipContracts.NameEnquiryResponse;
 import com.edgefort.simulator.provider.nibss.nip.contract.NibssNipContracts.TransactionStatusQueryRequest;
 import com.edgefort.simulator.provider.nibss.nip.contract.NibssNipContracts.TransactionStatusQueryResponse;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * NIP v9.4 XML messages. Mappings deliberately declare no {@code consumes}/{@code produces}: a mapping-level media
+ * type mismatch would be rejected before a NIBSS handler is selected and could not be answered in NIP form.
+ * {@link NibssNipWebConfiguration} enforces {@code application/xml} requests and every response is XML.
+ */
 @RestController
-@RequestMapping(path = "/nip/v9.4", produces = MediaType.APPLICATION_XML_VALUE)
+@RequestMapping("/nip/v9.4")
 @Tag(name = "NIBSS NIP v9.4", description = "NIP v9.4 XML message operations documented in the supplied specification")
 public class NibssNipController {
 
@@ -39,87 +40,44 @@ public class NibssNipController {
         this.adapter = adapter;
     }
 
-    @PostMapping(path = "/nameenquirysingle", consumes = MediaType.APPLICATION_XML_VALUE)
-    ResponseEntity<NameEnquiryResponse> nameEnquiry(
-            @Valid @RequestBody NameEnquiryRequest request,
-            @Parameter(
-                    description = "Simulation behavior for this request",
-                    schema = @Schema(
-                            defaultValue = "success",
-                            allowableValues = {
-                                    "success", "failure", "pending", "delayed-success",
-                                    "timeout", "event-timeout", "late-event"
-                            }
-                    )
-            )
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
+    @PostMapping("/nameenquirysingle")
+    ResponseEntity<NameEnquiryResponse> nameEnquiry(@Valid @RequestBody NameEnquiryRequest request) {
+        return xml(adapter.nameEnquiry(request));
+    }
+
+    @PostMapping("/fundtransfersingleitem_dc")
+    ResponseEntity<CreditTransferResponse> creditTransfer(@Valid @RequestBody CreditTransferRequest request) {
+        return xml(adapter.creditTransfer(request));
+    }
+
+    @PostMapping("/fundtransfersingleitem_dd")
+    ResponseEntity<DebitTransferResponse> debitTransfer(@Valid @RequestBody DebitTransferRequest request) {
+        return xml(adapter.debitTransfer(request));
+    }
+
+    @PostMapping("/txnstatusquerysingleitem")
+    ResponseEntity<TransactionStatusQueryResponse> transactionStatus(
+            @Valid @RequestBody TransactionStatusQueryRequest request
     ) {
-        NameEnquiryResponse response = adapter.nameEnquiry(request, scenario);
-        return response(response.responseCode(), response);
+        return xml(adapter.transactionStatus(request));
     }
 
-    @PostMapping(path = "/fundtransfersingleitem_dc", consumes = MediaType.APPLICATION_XML_VALUE)
-    ResponseEntity<CreditTransferResponse> creditTransfer(
-            @Valid @RequestBody CreditTransferRequest request,
-            @Parameter(
-                    description = "Simulation behavior for this request",
-                    schema = @Schema(
-                            defaultValue = "success",
-                            allowableValues = {
-                                    "success", "failure", "pending", "delayed-success",
-                                    "timeout", "event-timeout", "late-event"
-                            }
-                    )
-            )
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
-    ) {
-        CreditTransferResponse response = adapter.creditTransfer(request, scenario);
-        return response(response.responseCode(), response);
+    @PostMapping("/balanceenquiry")
+    ResponseEntity<BalanceEnquiryResponse> balanceEnquiry(@Valid @RequestBody BalanceEnquiryRequest request) {
+        return xml(adapter.balanceEnquiry(request));
     }
 
-    @PostMapping(path = "/fundtransfersingleitem_dd", consumes = MediaType.APPLICATION_XML_VALUE)
-    ResponseEntity<DebitTransferResponse> debitTransfer(
-            @Valid @RequestBody DebitTransferRequest request,
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
-    ) {
-        DebitTransferResponse response = adapter.debitTransfer(request, scenario);
-        return response(response.responseCode(), response);
+    @PostMapping("/fundtransferAdvice_dc")
+    ResponseEntity<CreditAdviceResponse> creditAdvice(@Valid @RequestBody CreditAdviceRequest request) {
+        return xml(adapter.creditAdvice(request));
     }
 
-    @PostMapping(path = "/txnstatusquerysingleitem", consumes = MediaType.APPLICATION_XML_VALUE)
-    TransactionStatusQueryResponse transactionStatus(@Valid @RequestBody TransactionStatusQueryRequest request) {
-        return adapter.transactionStatus(request);
+    @PostMapping("/fundtransferAdvice_dd")
+    ResponseEntity<DebitAdviceResponse> debitAdvice(@Valid @RequestBody DebitAdviceRequest request) {
+        return xml(adapter.debitAdvice(request));
     }
 
-    @PostMapping(path = "/balanceenquiry", consumes = MediaType.APPLICATION_XML_VALUE)
-    ResponseEntity<BalanceEnquiryResponse> balanceEnquiry(
-            @Valid @RequestBody BalanceEnquiryRequest request,
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
-    ) {
-        BalanceEnquiryResponse response = adapter.balanceEnquiry(request, scenario);
-        return response(response.responseCode(), response);
-    }
-
-    @PostMapping(path = "/fundtransferAdvice_dc", consumes = MediaType.APPLICATION_XML_VALUE)
-    ResponseEntity<CreditAdviceResponse> creditAdvice(
-            @Valid @RequestBody CreditAdviceRequest request,
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
-    ) {
-        CreditAdviceResponse response = adapter.creditAdvice(request, scenario);
-        return response(response.responseCode(), response);
-    }
-
-    @PostMapping(path = "/fundtransferAdvice_dd", consumes = MediaType.APPLICATION_XML_VALUE)
-    ResponseEntity<DebitAdviceResponse> debitAdvice(
-            @Valid @RequestBody DebitAdviceRequest request,
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
-    ) {
-        DebitAdviceResponse response = adapter.debitAdvice(request, scenario);
-        return response(response.responseCode(), response);
-    }
-
-    private <T> ResponseEntity<T> response(String responseCode, T body) {
-        HttpStatus status = "97".equals(responseCode) ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.OK;
-        return ResponseEntity.status(status).body(body);
+    static <T> ResponseEntity<T> xml(T body) {
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_XML).body(body);
     }
 }

@@ -2,17 +2,30 @@
 
 ## 1. Purpose
 
-This application is intended to simulate many external payment providers from one codebase. The first provider integrations are:
+This application simulates many external payment providers from one codebase. The current provider integrations are:
 
 - NIBSS NIP
-- Interswitch Transfer
+- Interswitch Quickteller Service v5 (Send Money, Bills Payment and Airtime)
 - Onafriq Bill Payment
 
-The simulator should reproduce each provider's public contract closely enough that a consuming application can use the simulator in local development, automated integration tests, demonstrations, and controlled failure testing.
+A consuming application integrates with the simulator exactly as it would with the real provider. It is used for local development, automated integration tests, demonstrations, and controlled failure testing.
 
-The recommended starting architecture is a **modular monolith with provider adapters**. It keeps deployment simple while isolating each provider's protocol, configuration, scenarios, and tests. Provider modules can later be extracted into separate services without redesigning their core contracts.
+The architecture is a **modular monolith with provider adapters**. It keeps deployment simple while isolating each provider's protocol, configuration, behavior capabilities, and tests. Provider modules can later be extracted into separate services without redesigning their core contracts.
 
 ## 2. Architecture decision
+
+### Contract fidelity rule
+
+The provider-facing surface of each module must be indistinguishable from the provider's specification:
+
+1. Behavior follows the provider's API specification: paths, methods, headers, authentication, request and response fields, response codes, HTTP statuses, and error bodies.
+2. A client integrated against the simulator needs no change when it switches to the real provider. Only the base URL and credentials differ.
+3. Several providers can be used at the same time from one simulator process.
+4. Nothing simulator-specific reaches a provider client: no simulator headers, query parameters, body fields, response fields, response codes, HTTP statuses, or error shapes the specification does not define.
+
+Simulation control therefore lives entirely in a separate control plane (the Admin API and configuration). A provider operation may only be driven into outcomes its specification can express; the control plane rejects anything else instead of inventing a response.
+
+Where a specification is incomplete, the module documents the gap in its provider document and does not fill it with assumptions presented as provider behavior.
 
 ### Why a modular monolith
 
@@ -34,224 +47,175 @@ Each provider module owns:
 
 - its HTTP endpoints and transport behavior;
 - request and response DTOs;
-- validation, authentication, signing, encryption, and serialization rules;
+- validation, authentication, signing, encryption, and serialization rules, including error responses;
 - translation to and from internal simulation commands;
 - provider-specific response codes and messages;
-- default scenarios and fixtures;
+- the declaration of which outcomes and transaction statuses each operation can express;
+- fixtures;
 - contract and integration tests.
 
-The shared core owns only provider-neutral simulation concepts such as scenario selection, delays, deterministic outcomes, ephemeral transaction state, audit events, and clock/id abstractions.
+The shared core owns only provider-neutral simulation concepts: behavior selection, delays, connection-level timeouts, ephemeral transaction state, pending transitions, and telemetry.
 
 ### Storage-free operating principle
 
 The simulator must not depend on a database, message broker, cache server, mounted volume, or other durable storage. It should start as a lightweight standalone process and be safe to discard and restart at any time.
 
-When a flow needs short-lived state, such as transfer requery or a pending result, keep it only in bounded application memory. All such state is intentionally lost on restart and must have a configurable time-to-live and maximum entry count. Static provider fixtures and scenario profiles belong in version-controlled YAML or JSON resources loaded at startup; these are configuration, not runtime storage.
+When a flow needs short-lived state, such as transfer requery or a pending result, keep it only in bounded application memory. All such state is intentionally lost on restart and must have a configurable time-to-live and maximum entry count. Static provider fixtures and behavior profiles belong in version-controlled YAML or JSON resources loaded at startup; these are configuration, not runtime storage.
 
-Prefer deterministic behavior derived from the request reference, configured profile, and seed when state is not required. This allows the same request to produce the same outcome without persisting transaction history. Do not introduce a persistent `TransactionStore` implementation unless this architecture decision is explicitly changed later.
+Prefer deterministic behavior derived from the request reference, request field values, and configured profiles and rules when state is not required. Do not introduce a persistent `TransactionStore` implementation unless this architecture decision is explicitly changed later.
 
-## 3. Recommended component model
+## 3. Component model
 
 ```text
-                         +---------------------------+
-Client application ---->| Provider-specific API     |
-                         | NIBSS / Interswitch /     |
-                         | Onafriq                   |
-                         +-------------+-------------+
-                                       |
-                         validate and translate
-                                       |
-                         +-------------v-------------+
-                         | Provider adapter          |
-                         | command/result mapping    |
-                         +-------------+-------------+
-                                       |
-                         +-------------v-------------+
-                         | Simulation core           |
-                         | scenarios, behavior,      |
-                         | delay, state, audit       |
-                         +------+------+-------------+
-                                |      |
-                       +--------v--+ +-v-------------+
-                       | Ephemeral | | Admin API     |
-                       | memory    | | profiles/rules|
-                       +-----------+ +---------------+
+                          +---------------------------+
+Client application -----> | Provider-specific API     |   exact specification surface;
+(unchanged from prod)     | NIBSS / Interswitch /     |   optional per-provider base path
+                          | Onafriq                   |
+                          +-------------+-------------+
+                                        |
+                          validate, authenticate, translate
+                                        |
+                          +-------------v-------------+
+                          | Provider adapter          |   spec field names as attributes;
+                          | command/result mapping    |   outcome -> documented response
+                          +-------------+-------------+
+                                        |
+                          +-------------v-------------+        +----------------+
+                          | Simulation core           | <----- | Admin API      |
+                          | behavior resolution,      |        | (control plane)|
+                          | delay, timeout, state     |        +----------------+
+                          +------+------+-------------+
+                                 |
+                          +------v------+
+                          | Ephemeral   |
+                          | memory      |
+                          +-------------+
 ```
 
 ### Provider API layer
 
-Expose separate provider namespaces rather than a generic endpoint with a `provider` parameter. For example, development URLs may look like:
+Each provider is mounted at its specification paths, for example:
 
 ```text
-/nip/v9.4/...
-/quicktellerservice/api/v5/...
-/services/...
+/nip/v9.4/...                       NIBSS (local HTTP XML wrapper; SOAP binding pending the WSDL)
+/passport/oauth/token               Interswitch OAuth
+/quicktellerservice/api/v5/...      Interswitch Quickteller Service v5
+/services/...                       Onafriq Biller Aggregation Platform
 ```
 
-These paths are illustrative. Exact paths, headers, media types, and status behavior must be copied from the version of each provider specification used by the consuming system. If the consuming system requires the provider's exact root path, use host-based routing or configurable base paths at deployment time instead of changing the internal design.
+A client sets the provider base URL to the simulator. If two providers ever publish the same path, give one of them `simulator.providers.<id>.base-path` (for example `/onafriq`) and include that prefix in the client's base URL; the prefix is a deployment setting, exactly like a different provider host. Spring MVC fails startup when two providers map an identical route.
+
+Authentication, error handling, and availability are scoped by the provider's Java package, never by URL prefix, so they follow the provider when it is mounted under a base path.
 
 ### Provider adapter
 
 The adapter is an anti-corruption layer. It prevents one provider's terminology from becoming the application's shared model. Its flow is:
 
-1. Decode and validate the provider request.
-2. Verify provider-specific credentials or signatures when enabled.
-3. Translate the request into a small provider-neutral simulation command.
-4. Ask the simulation engine for the configured behavior.
-5. Apply transaction state changes where appropriate.
-6. Translate the result into the exact provider response contract.
-7. Apply provider-specific signing or encryption when enabled.
+1. Decode and validate the provider request; render invalid requests in the provider's documented error format.
+2. Verify provider-specific credentials or signatures.
+3. Translate the request into a provider-neutral command: operation name, reference, amount, and request field values keyed by their specification names.
+4. Ask the core to simulate the operation.
+5. Translate the outcome or transaction status into the exact provider response contract.
 
-Do not create one large `ProviderService` containing `if/else` or `switch` branches for every provider. New providers should be added through module registration, not by editing existing provider implementations.
+New providers are added through module registration, not by editing existing provider implementations.
 
 ### Simulation core
 
-The shared core should define narrow contracts similar to the following concepts:
-
 ```java
-public interface SimulationHandler<C extends SimulationCommand, R extends SimulationResult> {
-    ProviderOperation operation();
-    R handle(C command, SimulationContext context);
+public interface SimulatedProvider {            // one per provider module, in the module root package
+    String id();
+    List<ProviderOperation> operations();       // outcomes and query statuses the spec can express
 }
 
 public interface ScenarioResolver {
-    SimulationBehavior resolve(ScenarioQuery query);
+    ResolvedBehavior resolve(ScenarioQuery query);
 }
 
 public interface TransactionStore {
     Optional<SimulatedTransaction> find(TransactionKey key);
     SimulatedTransaction save(SimulatedTransaction transaction);
+    Optional<SimulatedTransaction> saveIfAbsent(SimulatedTransaction transaction);
 }
 ```
 
-These are proposed boundaries, not code that must be copied unchanged. Keep commands focused on information the core actually needs, such as operation, amount, account reference, client reference, and correlation metadata. Preserve the complete provider DTO only in the provider module or an audit-safe representation.
+- `ProviderOperationSimulator`: operations without transaction state, such as name or balance enquiry. Returns success or failure, or produces a timeout.
+- `TransactionSimulationService`: operations that create a transaction visible to a later provider query. Records the transaction on receipt, detects duplicates atomically, schedules pending transitions, then holds and responds or times out.
+- `ProviderRegistry`: validates that configured providers, operations, profiles, and rules match the registered modules.
 
-Important shared concepts are:
+### Behavior selection
 
-- `ProviderId`: stable identifier such as `nibss-nip` or `interswitch-transfer`;
-- `ProviderOperation`: module-defined operation key;
-- `SimulationContext`: profile, correlation id, clock, and request metadata;
-- `SimulationBehavior`: success/failure result, delay, timeout, malformed response, or connection behavior;
-- `ScenarioResolver`: selects behavior using deterministic rules;
-- `TransactionStore`: stores simulated transaction lifecycle data;
-- `AuditPublisher`: records scenario selection and outcome without leaking secrets.
+Behavior is data-driven and selected only through the control plane. A **profile** is a named behavior in `simulator.profiles`:
 
-### Scenario engine
+| Field | Meaning |
+|---|---|
+| `outcome` | `success`, `failure` (provider-declared), `pending`, or `timeout` |
+| `delay` | Time the request is held before the response, or before the connection is closed |
+| `completes-as` | Final status of a pending or timed-out transaction: `success`, `failed`, `reversed`, or `never` |
+| `transition-delay` | Time from receipt until the final status is reached |
+| `received` | For `timeout`: whether the provider recorded the request |
 
-Scenarios must be data-driven so that common behaviors do not require custom controller code. A behavior should be selectable by:
+A **timeout** is what a client sees when a provider never answers: the request is held for `delay` and the connection is then closed without a status line, headers, or body. If the profile says the provider received the request, the transaction is recorded on receipt and reaches `completes-as`, so the client's subsequent provider query observes a real provider state.
 
-- provider and operation;
-- active simulation profile, such as `happy-path`, `timeout`, or `unstable`;
-- request matchers, such as amount, account suffix, reference, or an explicitly allowed test header;
-- a one-time override associated with a correlation or client reference;
-- probability, with a configured seed when deterministic test execution is required.
+Precedence, from highest to lowest:
 
-Recommended precedence, from highest to lowest, is:
+1. one-time override for a provider reference;
+2. override for the next N requests of a provider operation (or of any operation of the provider);
+3. test-data rule: a request field, named as in the specification, equals a configured value;
+4. profile assigned to the provider operation;
+5. profile assigned to the provider;
+6. global default profile.
 
-1. one-time request/correlation override;
-2. explicit request matcher in the active profile;
-3. operation rule in the active profile;
-4. provider default;
-5. global success default.
-
-Typical behavior types are:
-
-- immediate success;
-- provider-declared failure;
-- delayed success or failure;
-- no response/timeout;
-- HTTP or transport error;
-- malformed body for resilience testing;
-- duplicate response;
-- pending response followed by success, failure, or reversal;
-- intermittent behavior with deterministic randomness.
-
-Delay and timeout are different behaviors and must remain explicit:
-
-- **delayed response:** hold the request for a configured duration, then return success or provider-declared failure;
-- **client-visible timeout:** hold the connection longer than the consumer's configured timeout, with a simulator-side safety cap so resources are eventually released;
-- **immediate transport failure:** close the connection or return the configured HTTP error without a provider response body;
-- **event/callback timeout:** accept the request, optionally return `PENDING`, and deliberately suppress the expected callback or completion event;
-- **late event:** emit an in-process scheduled callback after the consumer's expected event deadline to test late-arrival handling.
-
-Scheduled delays and events must use bounded executors rather than one unmanaged thread per request. Configuration must cap delay duration, queued tasks, and concurrent held requests. Restarting the simulator cancels all pending delays and events by design.
-
-Keep the scenario selection independent of provider response construction. The core can select a semantic outcome such as `INVALID_DESTINATION_ACCOUNT`; each adapter maps that outcome to its own response code and payload.
+Provider-wide selections apply only to operations that can express them. Operation-specific selections are rejected when the operation's specification cannot express the outcome or the resulting query statuses.
 
 ### Stateful transaction simulation
 
-Transfer flows need state because a status/requery operation must agree with an earlier transfer operation. A minimal lifecycle can be:
-
 ```text
-RECEIVED -> PROCESSING -> SUCCESS
-                       -> FAILED
-SUCCESS  -> REVERSED
+received -> PENDING -> SUCCESS | FAILED | REVERSED     (pending, timeout)
+received -> SUCCESS | FAILED                           (success, failure)
+not received                                           (timeout with received: false)
 ```
 
-Use a transaction key that includes the provider and provider/client reference to prevent collisions. Define idempotency explicitly: receiving the same transfer reference should either return the original result or the provider-specific duplicate response, according to the selected scenario and real contract.
-
-Use only an in-memory implementation. It should be a bounded, thread-safe map with configurable expiry and explicit reset support. Process restarts intentionally clear transaction state, pending transitions, one-time overrides, and scheduled callbacks. Requery consistency is guaranteed only while the same simulator process is running and before the entry expires.
-
-For completely stateless scenarios, derive status from the provider/client reference and deterministic seed instead of adding an entry to the map. Keep the `TransactionStore` interface as an internal abstraction for testability, but do not provide database, file, Redis, or other durable implementations.
+The transaction key is provider ID plus provider reference. Receiving the same reference again returns the provider-specific duplicate response. State is a bounded, TTL-limited, thread-safe in-memory map with explicit reset. Process restarts clear transactions, pending transitions, overrides, and runtime rules.
 
 ### Administration and control plane
 
-Keep simulation administration separate from provider-facing endpoints. A protected internal API can provide:
-
 ```text
-GET    /admin/providers
+GET    /admin/providers                                   providers, operations, capabilities, assignments
 GET    /admin/profiles
-PUT    /admin/profiles/{profile}/activate
-POST   /admin/overrides
-DELETE /admin/overrides/{id}
-POST   /admin/state/reset
+PUT    /admin/providers/{provider}/profile
+DELETE /admin/providers/{provider}/profile
+PUT    /admin/providers/{provider}/operations/{operation}/profile
+DELETE /admin/providers/{provider}/operations/{operation}/profile
+POST   /admin/overrides        GET /admin/overrides        DELETE /admin/overrides/{id}
+POST   /admin/rules            GET /admin/rules            DELETE /admin/rules/{id}
 GET    /admin/transactions/{provider}/{reference}
+POST   /admin/state/reset      (alias: DELETE /admin/state)
 ```
 
-An override could express: "for the next NIBSS NIP transfer with reference X, wait 30 seconds and then return the configured timeout response." Administrative endpoints must never accidentally become part of a simulated provider contract.
+Reset clears runtime state and restores the configured profile assignments and rules. Administrative endpoints are never part of a simulated provider contract.
 
 ## 4. Project organization
 
-### Stage 1: package-by-feature in the current project
-
-The repository is currently a minimal single-module Spring Boot application. Begin with strict feature packages to establish boundaries without first restructuring the Gradle build:
-
 ```text
-src/main/java/com/edgefort/providersimulator/
-  ProviderSimulatorApplication.java
+src/main/java/com/edgefort/simulator/
+  SimulatorApplication.java
+  config/                      typed simulator properties and core wiring
   core/
-    model/
-    scenario/
-    state/
-    audit/
-    time/
-  admin/
-    api/
-    application/
+    application/               operation and transaction simulation, delays, transitions, telemetry
+    provider/                  SimulatedProvider, ProviderOperation, ProviderRegistry
+    scenario/                  profiles, assignments, overrides, rules, resolver
+    state/                     transaction model and in-memory store
+  admin/api/                   control plane
+  infrastructure/web/          base paths, provider availability, timeouts, capacity
   provider/
-    nibss/nip/
-      api/
-      application/
-      config/
-      contract/
-      scenario/
-    interswitch/transfer/
-      api/
-      application/
-      config/
-      contract/
-      scenario/
-  infrastructure/
-    persistence/
-    observability/
-    web/
+    nibss/nip/                 NibssNipProvider + api/ application/ contract/
+    interswitch/               InterswitchProvider + common/ transfer/ billpayment/
+    onafriq/billpayment/       OnafriqBillPaymentProvider + api/ application/ config/ contract/
 ```
 
-Within a provider, `contract` contains wire DTOs and response codes, `api` contains transport entry points, `application` performs mapping and orchestration, and `scenario` contains provider defaults/mappings. Avoid imports from one provider package into another.
+Within a provider, `contract` contains wire DTOs and response codes, `api` contains transport entry points, error rendering, and authentication, and `application` performs mapping and orchestration. ArchUnit tests enforce that the core does not depend on providers, admin, or web infrastructure, and that providers do not depend on each other.
 
-Use package-boundary tests, for example with ArchUnit, when implementation begins. They should enforce that provider modules can depend on `core`, but cannot depend on each other, and that `core` cannot depend on provider packages.
-
-### Stage 2: Gradle modules when boundaries stabilize
+### Gradle modules when boundaries stabilize
 
 Move to a multi-module build when multiple contributors are adding providers or accidental coupling becomes difficult to control:
 
@@ -263,156 +227,106 @@ simulator/
   simulator-test-support/
   providers/
     nibss-nip-simulator/
-    interswitch-transfer-simulator/
+    interswitch-simulator/
+    onafriq-bill-payment-simulator/
 ```
 
-Dependency direction must remain:
+`simulator-app` is the composition root. Provider modules may use `simulator-test-support` only in test code. Do not place provider implementations in `simulator-core`.
 
-```text
-simulator-app
-  -> simulator-admin
-  -> nibss-nip-simulator       -> simulator-core
-  -> interswitch-transfer-simulator -> simulator-core
-```
+## 5. Provider design
 
-`simulator-app` is the composition root and should contain little beyond application startup and module wiring. Provider modules may use `simulator-test-support` only in test code. Do not place provider implementations in `simulator-core`.
+Each provider document records the reviewed specification, implemented routes, operation names, declared outcomes and query statuses, test-data match fields, response-code mapping, error rendering, and every known deviation:
 
-### Optional module discovery
-
-Explicit Spring configuration imports are preferable while the number of providers is small because startup behavior is easy to understand. If the provider count becomes large, each module can publish a Spring Boot auto-configuration and a `ProviderModuleDescriptor`. Discovery should be used only for registration and metadata; it should not replace typed application contracts with reflection or arbitrary maps.
-
-## 5. Starting provider design
-
-### NIBSS NIP module
-
-Implement only the NIP operations required by the consuming application, then expand. Likely starting capabilities include name enquiry, funds transfer, and transaction status/requery, but operation names and payload details must be verified against the applicable NIBSS specification and certification environment.
-
-The module should own:
-
-- exact NIP request/response models and field formatting;
-- institution/channel identifiers used by the simulator;
-- request validation and required-field behavior;
-- response-code mapping for semantic simulation outcomes;
-- session/reference generation and duplicate handling;
-- cryptographic or transport behavior required by the applicable specification;
-- name-enquiry fixtures keyed by account and institution;
-- state transitions shared by transfer and status operations.
-
-Initial NIBSS scenarios should cover successful and unsuccessful name enquiry, successful transfer, invalid destination, insufficient funds response where relevant to the simulated contract, duplicate reference/session, pending transfer, timeout, status after each terminal state, and reversal behavior if consumed by the client.
-
-### Interswitch Transfer module
-
-Implement the transfer operations actually called by the consuming application, typically account/name validation, transfer initiation, and status/requery. Verify endpoint versions, headers, authentication, payloads, and error contracts against the applicable Interswitch documentation before coding.
-
-The module should own:
-
-- exact Interswitch request/response models;
-- client credential, token, signature, or certificate simulation required by the chosen API version;
-- response-code and HTTP-status mapping;
-- transfer reference generation and duplicate rules;
-- beneficiary fixtures;
-- transfer and requery state transitions;
-- provider-specific timeout and malformed-response behavior.
-
-Initial Interswitch scenarios should mirror the NIBSS semantic coverage while returning Interswitch-specific wire responses. Sharing semantic outcomes does not mean sharing provider DTOs or response codes.
+- `NIBSS_NIP_V9_4.md`
+- `INTERSWITCH_SEND_MONEY_V5.md`
+- `INTERSWITCH_BILLS_PAYMENT_V5.md`
+- `ONAFRIQ_BILL_PAYMENT_V1.md`
 
 ### Specification handling
 
 Provider specifications can be versioned, restricted, or changed. Record the simulated specification version in each module and expose it through provider metadata. Never invent field lengths, response codes, signing rules, or encryption behavior from assumptions. Store examples that come from restricted documents only where repository access and data-classification policy permit it.
 
+Open specification dependencies:
+
+- NIBSS: the institution WSDL and message-security specification are required to replace the local HTTP XML wrapper with the production SOAP binding.
+- Onafriq: the HMAC signing specification is required to support HMAC-authenticated clients.
+- Recorded sandbox responses, where available, are required for byte-level contract tests.
+
 ## 6. Configuration model
 
-Use typed Spring configuration properties and keep secrets outside source control. Keep every provider's metadata and provider-specific settings together under `simulator.providers.<provider-id>`. The shared metadata remains consistent across providers, while each provider owns the schema inside its `config` section:
+Use typed Spring configuration properties and keep secrets outside source control. Every provider's metadata, mounting, default behavior, and provider-specific settings live under `simulator.providers.<provider-id>`:
 
 ```yaml
 simulator:
   default-profile: happy-path
-  deterministic-seed: 1001
+  profiles:
+    failure:
+      outcome: failure
+    timeout:
+      outcome: timeout
+      delay: 60s
+      completes-as: success
   providers:
-    nibss-nip:
+    interswitch:
       enabled: true
-      specification-version: "NIP v9.4"
-      security-mode: not-configured-wsdl-security-not-supplied
-    interswitch-transfer:
-      enabled: true
-      specification-version: "Quickteller Service API v5 public documentation"
+      specification-version: Quickteller Service API v5 public documentation (Send Money, Bills Payment and Airtime)
       security-mode: oauth-client-credentials-and-bearer
+      base-path: ""
+      profile: null
+      operation-profiles:
+        transfer: failure
+      rules:
+        - operation: name-enquiry
+          field: accountId
+          equals: "0000000000"
+          profile: failure
       config:
         client-id: ${INTERSWITCH_CLIENT_ID:simulator-client}
-        client-secret: ${INTERSWITCH_CLIENT_SECRET:simulator-secret}
-        access-token: ${INTERSWITCH_ACCESS_TOKEN:simulator-access-token}
-        token-expires-in: ${INTERSWITCH_TOKEN_EXPIRES_IN:86400}
-        terminal-id: ${INTERSWITCH_TERMINAL_ID:3PBL0001}
-    onafriq-bill-payment:
-      enabled: true
-      specification-version: "Biller Aggregation Platform API v1.0.0 public documentation"
-      security-mode: api-key
-      config:
-        api-key: ${ONAFRIQ_API_KEY:simulator-api-key}
 ```
 
-Each provider module binds a dedicated validated properties class to `simulator.providers.<provider-id>.config`; it must not add another provider-specific section directly under `simulator`. Adding a provider therefore means adding one provider entry, its typed `config` binder, and environment-variable placeholders for credentials or deployment-specific values. Providers with no specific settings, such as the current NIBSS NIP module, omit `config`.
+Each provider module binds a dedicated validated properties class to `simulator.providers.<provider-id>.config`. Startup fails when a configured provider has no module (or the reverse), a profile delay is negative or above `simulator.limits.max-delay`, a base path is malformed, two providers map the same route, or a configured profile, operation, rule field, or assignment cannot be expressed by the provider specification.
 
-Recommended security modes are:
+## 7. Request flow
 
-- `relaxed`: validate business payloads but make local development easy;
-- `strict`: enforce credentials, signatures, certificates, timestamps, and replay protection as the real provider does.
-
-Mode differences must be explicit. Do not silently accept invalid security data in strict mode.
-
-Profiles and scenario rules should be YAML resources. Runtime profile selection and overrides remain in memory and disappear on restart; no database-backed editing is required. Configuration changes should be validated at startup so invalid response codes, unknown operations, negative delays, delays above the safety cap, and contradictory matchers fail early.
-
-## 7. Request flow example
-
-A transfer request should follow this sequence:
-
-1. The NIBSS or Interswitch controller receives its native request.
-2. A provider-specific validator validates transport, security, and fields.
-3. The adapter creates a canonical `TransferCommand` while retaining provider metadata required for the response.
-4. The scenario resolver selects a behavior using provider, operation, active profile, and request matchers.
-5. The transaction service checks idempotency and current state.
-6. The behavior executor applies a deterministic delay/error/result.
-7. Any short-lived transaction state is saved to bounded memory, or the outcome is derived deterministically without state.
-8. The provider adapter maps the semantic result to the native response code and body.
-9. The response is signed or encrypted when strict mode requires it.
-10. Structured audit and metrics are emitted with secrets and sensitive account data masked.
+1. The provider controller receives its native request at the specification path.
+2. The provider validates transport, security, and fields, and renders failures in its documented error format.
+3. The adapter creates a provider-neutral command with specification-named attributes.
+4. The resolver selects a behavior from overrides, rules, and profile assignments.
+5. For transactional operations, the core checks duplicates, records the transaction on receipt, and schedules any pending transition.
+6. The core holds the request for the configured delay.
+7. On timeout, the connection is closed without a response; otherwise the adapter maps the outcome or status to the native response.
+8. Metrics and logs record provider, operation, profile, selection source, and outcome, never request field values.
 
 ## 8. Testing strategy
 
 Every provider module needs tests at several boundaries:
 
-- **Contract tests:** JSON/XML field names, required fields, formats, response codes, headers, signing, and encryption.
-- **Adapter tests:** native request to canonical command and semantic result to native response.
-- **Scenario tests:** precedence, matching, deterministic randomness, delays, malformed responses, and one-time overrides.
-- **State tests:** idempotency, duplicate references, pending-to-terminal transitions, status consistency, and reversal.
-- **HTTP integration tests:** application endpoint behavior using the consuming application's real sample requests where permitted.
+- **Contract tests:** field names, required fields, formats, response codes, headers, signing, and error formats. Recorded sandbox responses are the reference where available.
+- **Behavior tests:** every declared outcome, pending completion, timeout as a dropped connection followed by a provider query, duplicates, and rejection of undeclared outcomes.
+- **Control-plane tests:** precedence, operation capability checks, overrides, rules, and reset.
+- **HTTP integration tests:** real-port tests for dropped connections; MockMvc elsewhere.
 - **Architecture tests:** core independence and no cross-provider dependencies.
-- **Consumer smoke tests:** point the consuming application at this simulator and execute its critical transfer flows.
+- **Consumer smoke tests:** run the consuming application against the provider sandbox and against the simulator with only the base URL changed.
 
-Maintain sanitized golden request/response fixtures per provider and specification version. Contract fixtures should not contain real account details, credentials, keys, certificates, or customer data.
-
-Use a controllable clock and delay abstraction. Tests must not wait for real 30-second timeouts; production simulation may delay or hold a connection, while unit tests advance a fake clock or verify the selected delay behavior.
+Contract fixtures must not contain real account details, credentials, keys, certificates, or customer data.
 
 ## 9. Observability and security
 
-Emit structured logs and metrics tagged with `provider`, `operation`, `profile`, `scenario`, and `outcome`. Useful metrics include request count, response latency, active delayed requests, semantic failures, transport failures, and scenario selection count.
+Metrics `simulator.simulations` (tags `provider`, `operation`, `profile`, `source`, `outcome`), `simulator.duplicates`, and the gauge `simulator.held.requests` are exposed through `/actuator/metrics`. Logs record the same dimensions and never request field values.
 
 Apply the following safeguards:
 
-- mask account numbers and any personally identifiable information in logs;
 - never store or commit real provider credentials or private keys;
 - restrict the admin API and state-reset operations;
-- cap configured delays and concurrent held connections to prevent resource exhaustion;
-- cap request body sizes and validate content types;
-- separate strict security test material from production provider secrets;
-- enforce TTL and entry-count limits for ephemeral transaction, override, and audit state;
-- clearly identify responses as simulator traffic in internal observability, without changing provider contracts.
+- cap configured delays and concurrent held connections; capacity exhaustion returns a bare HTTP 503;
+- enforce TTL and entry-count limits for ephemeral transactions, overrides, and rules;
+- separate simulator test credentials from production provider secrets.
 
-The simulator should not be publicly reachable by default. A strict simulator is useful for integration confidence, but it is not a substitute for provider certification or end-to-end testing against an official sandbox.
+The simulator should not be publicly reachable by default. It is not a substitute for provider certification or end-to-end testing against an official sandbox.
 
 ## 10. Scaling and extraction path
 
-Run all providers in one application instance. Because runtime state is intentionally local and ephemeral, do not load-balance stateful simulation flows across multiple instances. If multiple instances are needed for traffic volume, use sticky routing or restrict them to deterministic stateless scenarios; each instance remains independent and restartable.
+Run all providers in one application instance. Because runtime state is intentionally local and ephemeral, do not load-balance stateful simulation flows across multiple instances. If multiple instances are needed for traffic volume, use sticky routing or restrict them to stateless operations; each instance remains independent and restartable.
 
 Extract a provider into its own deployable service only when there is measurable need, such as:
 
@@ -424,70 +338,27 @@ Extract a provider into its own deployable service only when there is measurable
 
 Because provider modules communicate with shared capabilities through narrow interfaces, extraction can replace in-process interfaces with an internal API or event contract. Do not introduce that network boundary or durable coordination in advance.
 
-## 11. Proposed implementation plan
-
-### Phase 1: foundation
-
-1. Create the `core`, `admin`, `provider`, and `infrastructure` package boundaries.
-2. Define provider-neutral commands/results, `SimulationBehavior`, `ScenarioResolver`, `TransactionStore`, clock, delay, and audit interfaces.
-3. Implement YAML-backed profiles, deterministic scenario resolution, a bounded TTL in-memory transaction store, and startup validation.
-4. Add protected admin endpoints for metadata, profile selection, overrides, transaction lookup, and reset.
-5. Add architecture and scenario-engine tests.
-
-### Phase 2: NIBSS NIP vertical slice
-
-1. Obtain and record the applicable NIP specification/version and sanitized examples.
-2. Implement one complete operation, preferably name enquiry, from HTTP contract through scenario response.
-3. Add transfer initiation with idempotent state handling.
-4. Add transaction status/requery using saved state.
-5. Implement strict security behavior required by the chosen specification.
-6. Validate the consuming application's success, failure, pending, duplicate, and timeout flows.
-
-### Phase 3: Interswitch Transfer vertical slice
-
-1. Obtain and record the applicable API specification/version and sanitized examples.
-2. Reuse core scenario and state contracts, but create independent Interswitch wire models and mappings.
-3. Implement account validation/name enquiry, transfer, and status operations required by the consumer.
-4. Implement strict authentication/signature behavior for the selected API version.
-5. Run the same semantic scenario matrix and consumer smoke tests with Interswitch-specific assertions.
-
-### Phase 4: hardening and provider onboarding
-
-1. Preserve the storage-free design: document restart semantics and use deterministic stateless outcomes where possible.
-2. Add metrics dashboards, in-memory TTL/size limits, delay/event concurrency limits, and audit controls.
-3. Extract Gradle modules when package boundaries or team ownership justify it.
-4. Create a provider onboarding checklist and module template from the two proven implementations.
-
-## 12. Provider onboarding checklist
+## 11. Provider onboarding checklist
 
 For every additional provider:
 
-1. Record the provider, product, protocol, and specification version.
+1. Record the provider, product, protocol, and specification version in a provider document.
 2. List only the operations required by consumers.
-3. Create a provider package/module with no dependencies on other providers.
-4. Add native DTOs, validation, security, and semantic mappings.
-5. Define fixtures and the default scenario matrix.
+3. Create a provider package with a `SimulatedProvider` in its root and no dependencies on other providers.
+4. Declare each operation's outcomes, query statuses, and match fields strictly from the specification.
+5. Add native DTOs, validation, security, error rendering, and semantic mappings.
 6. Define reference uniqueness, idempotency, and transaction lifecycle behavior.
-7. Add contract, adapter, scenario, state, and HTTP integration tests.
-8. Add typed configuration and masked observability.
-9. Verify strict and relaxed security modes.
-10. Run consumer smoke tests before declaring the provider supported.
+7. Add a `simulator.providers.<id>` entry and, if needed, a typed `config` binder.
+8. Add behavior, contract, and HTTP integration tests, including dropped-connection timeouts and base-path mounting.
+9. Run consumer smoke tests before declaring the provider supported.
 
-## 13. Definition of done for the first release
+## 12. Status
 
-The first useful release should provide:
-
-- NIBSS NIP and Interswitch Transfer as isolated provider features;
-- operations required by the first consuming application, based on verified specifications;
-- happy-path, provider-failure, pending, duplicate, delayed, timeout, and requery scenarios;
-- provider event/callback suppression and late-event scenarios;
-- deterministic profile/rule selection;
-- bounded in-memory stateful and idempotent transfer behavior, with documented reset-on-restart semantics;
-- no database, broker, external cache, mounted volume, or other runtime storage dependency;
-- protected runtime controls and state reset;
-- strict and relaxed security modes where applicable;
-- sanitized contract fixtures and automated tests;
-- masked structured logs and basic metrics;
-- documentation identifying every simulated specification version and known deviation.
-
-This design allows many simulators to coexist in one application without turning the codebase into a shared collection of provider-specific conditionals. It also avoids premature distributed-system complexity while preserving a practical path to independent services later.
+| Area | State |
+|---|---|
+| Core behavior model, control plane, timeouts, base paths, metrics | Implemented |
+| NIBSS NIP v9.4 messages 010–023 | Implemented over local HTTP XML; SOAP binding and message security pending the WSDL and security specification |
+| Interswitch Send Money, Bills Payment and Airtime v5 | Implemented from public documentation |
+| Onafriq bill payment | Implemented from public documentation; HMAC authentication pending the signing specification |
+| Recorded-response contract tests | Pending sandbox recordings |
+| Gradle multi-module build | Deferred until boundaries or ownership require it |

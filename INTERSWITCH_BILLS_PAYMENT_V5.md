@@ -2,41 +2,41 @@
 
 ## Source and scope
 
-This module was implemented from the public [Interswitch Bills Payment guide](https://docs.interswitchgroup.com/docs/bills-payment-1) and [Airtime & Data guide](https://docs.interswitchgroup.com/docs/airtime-recharge-virtual-top-up), reviewed on 18 July 2026. The airtime guide identifies itself as document version 2.0, updated 29 May 2026, for Quickteller Service API v5. The module covers the shared six-step flow:
+Provider id: **`interswitch`** (shared with Send Money; see `INTERSWITCH_SEND_MONEY_V5.md`). Quickteller Service v5 is one API host with shared Passport OAuth, one `TerminalId`, and one `GET /Transactions?requestRef=` query, so bill payments and transfers share one transaction keyspace: a `requestReference` already used by a transfer `transferCode` is a duplicate.
+
+Implemented from the public [Bills Payment guide](https://docs.interswitchgroup.com/docs/bills-payment-1) and [Airtime Recharge (Virtual Top up) guide](https://docs.interswitchgroup.com/docs/airtime-recharge-virtual-top-up) (both document version 2.0, updated 29 September 2026), the [Query Transaction reference](https://docs.interswitchgroup.com/reference/query-transaction-1), and the [Response Codes](https://docs.interswitchgroup.com/docs/response-codes) page, re-reviewed on 7 November 2026. The module covers the six-step flow:
 
 1. retrieve categories;
-2. retrieve billers in a category;
-3. retrieve payment items when the biller requires them;
-4. validate a customer identifier;
+2. retrieve billers (by category or all);
+3. retrieve payment items;
+4. validate customers;
 5. make a bill payment or airtime recharge;
-6. query a transaction after completion, pending processing, or a client-visible timeout.
+6. query a transaction.
 
-Airtime is not exposed as a separate provider route because the guide explicitly uses the bills-payment flow. The consumer selects category `4` (`Mobile/Recharge`), obtains a payment code, validates the phone number, and invokes `POST /Transactions`.
+Airtime is not a separate route: the Airtime guide uses the same `POST /Transactions` with category `4` (`Mobile/Recharge`) payment codes.
 
 ## Authentication and headers
 
-The module shares the existing Quickteller OAuth simulation:
-
 - `POST /passport/oauth/token` accepts HTTP Basic client credentials and `grant_type=client_credentials`;
-- every `/quicktellerservice/api/v5/**` route requires `Authorization: Bearer <token>`;
-- bills-payment routes require `TerminalId`;
-- customer validation and payment also contain `TerminalId` in their bodies, and the simulator rejects a header/body mismatch;
-- `X-Simulation-Scenario` is optional on payment and defaults to `success`.
+- every Quickteller v5 route requires `Authorization: Bearer <token>` and the configured `TerminalId` header (header names are case-insensitive, so the guides' `TerminalID`/`terminalId` spellings work);
+- customer validation requires `TerminalId` in the body (as published); payment accepts an optional body `TerminalId` (the Airtime guide includes it, the Bills Payment guide does not). A body `TerminalId` must equal the header.
 
-Configure the shared Interswitch credentials with `INTERSWITCH_CLIENT_ID`, `INTERSWITCH_CLIENT_SECRET`, `INTERSWITCH_ACCESS_TOKEN`, `INTERSWITCH_TOKEN_EXPIRES_IN`, and `INTERSWITCH_TERMINAL_ID`.
+When `simulator.providers.interswitch.base-path` is set (for example `/isw`), every route, including the token endpoint, is served under that prefix and the same checks apply.
+
+Credentials: `INTERSWITCH_CLIENT_ID`, `INTERSWITCH_CLIENT_SECRET`, `INTERSWITCH_ACCESS_TOKEN`, `INTERSWITCH_TOKEN_EXPIRES_IN`, `INTERSWITCH_TERMINAL_ID`, `INTERSWITCH_BASE_PATH` (bound to `simulator.providers.interswitch.*`).
 
 ## Implemented routes
 
 | Method | Route | Behavior |
 |---|---|---|
-| `GET` | `/quicktellerservice/api/v5/services/categories` | Returns utility and mobile/recharge categories |
-| `GET` | `/quicktellerservice/api/v5/services?categoryId={id}` | Returns deterministic billers for the category |
-| `GET` | `/quicktellerservice/api/v5/services/options?serviceid={id}` | Returns payment items for billers that expose options |
-| `POST` | `/quicktellerservice/api/v5/Transactions/validatecustomers` | Validates one or more documented customer records |
-| `POST` | `/quicktellerservice/api/v5/Transactions` | Purchases a bill or airtime product |
-| `GET` | `/quicktellerservice/api/v5/Transactions?requestRef={reference}` | Queries bills-payment or Send Money transactions by reference |
+| `GET` | `/quicktellerservice/api/v5/services/categories` | Utility and mobile/recharge categories |
+| `GET` | `/quicktellerservice/api/v5/services?categoryId={id}` and `/services` | Billers of one category, or of all categories |
+| `GET` | `/quicktellerservice/api/v5/services/options?serviceid={id}` | Payment items of a biller |
+| `POST` | `/quicktellerservice/api/v5/Transactions/validatecustomers` | Validates the `customers` entries |
+| `POST` | `/quicktellerservice/api/v5/Transactions` (Airtime guide, reference) and `/transactions` (Bills Payment guide sample) | Bill or airtime purchase |
+| `GET` | `/quicktellerservice/api/v5/Transactions?requestRef={reference}` | Shared query for bill payments and transfers |
 
-The deterministic catalog intentionally stays small and lightweight:
+Deterministic catalog:
 
 | Service | Category | Biller ID | Payment code | Amount rule | Result |
 |---|---:|---:|---|---|---|
@@ -45,45 +45,61 @@ The deterministic catalog intentionally stays small and lightweight:
 | 9mobile/Etisalat Recharge Top-Up | `4` | `120` | `6280510490` | `5000`–`1000000` kobo | Network recharge metadata |
 | Glo QuickCharge | `4` | `402` | `628051045` | `5000`–`1000000` kobo | Network recharge metadata |
 
-These values come from examples in the public guide. The simulator does not copy the guide's large and changing production catalog; consumers should discover and use the deterministic entries returned by this instance.
-
 ## Payment example
 
 ```json
 {
-  "TerminalId": "3PBL0001",
   "paymentCode": "628051043",
   "customerId": "2348012345678",
   "customerMobile": "2348012345678",
   "customerEmail": "customer@example.com",
   "amount": "50000",
-  "requestReference": "airtime-local-001"
+  "requestReference": "145300000001"
 }
 ```
 
-Amounts are in kobo. Regular airtime accepts ₦50–₦10,000 (`5000`–`1000000` kobo). `requestReference` is required, unique, and limited to 20 characters. Successful airtime responses include `network`, `phoneNumber`, and naira-denominated `amountCredited` in `AdditionalInfo`. The simulator returns documented common codes including:
+Amounts are in kobo; `requestReference` is required, unique across the whole `interswitch` provider, and at most 20 characters. Optional `customerName`, `additionalInfo`, and `TerminalId` are accepted. Successful airtime responses include `network`, `phoneNumber`, and naira `amountCredited` in `AdditionalInfo`; the pin-based electricity product returns `RechargePIN`, `PhcnTokenDetails`, `MiscData`, and `Pin`/`Token`/`Units` in `AdditionalInfo`.
 
-- `90000` for success;
-- `90003` for an invalid amount;
-- `90005` for a duplicate transaction;
-- `90006` for a simulated provider failure;
-- `90007` for an invalid payment code;
-- `90008` when customer validation contains an invalid product.
+The query returns the published shape: `BillPayment` (`biller`, `customerId1`, `customerId2`, `paymentTypeName`, `paymentTypeCode`, `billerId`), `amount`, `currencyCode`, `customer`, `customerEmail`, `customerMobile`, `paymentDate`, `requestReference`, `serviceCode`, `serviceName`, `serviceProviderId`, `status`, `surcharge`, `transactionRef`, `transactionResponseCode`, `transactionSet` (`BillPayment`). It is answered from the recorded simulator transaction (payment code, customer, mobile, email, amount, terminal, `TransactionRef`, recharge PIN are stored as transaction attributes).
 
-`90009` and `SIMULATOR_TIMEOUT` are simulator lifecycle extensions used consistently with the existing Interswitch module for pending and client-visible timeout behavior.
+## Simulated operations
 
-## Simulation behavior and state
+Behavior is selected only through the admin API or configuration (reference override → operation override → test-data rule → operation profile → provider profile → default profile). The former simulator-only scenario request header and the simulator-only timeout response code/HTTP 504 have been removed; a timeout is now a dropped connection with no response bytes.
 
-The payment operation supports `success`, `failure`, `pending`, `delayed-success`, `timeout`, `event-timeout`, and `late-event`. One-time admin overrides take precedence over the request header. The admin provider ID is `interswitch-bill-payment`.
+| Operation | Kind | Outcomes | Query statuses | Rule match fields |
+|---|---|---|---|---|
+| `customer-validation` | stateless, evaluated once per `customers` entry with a known payment code | success, failure, timeout | — | `PaymentCode`, `CustomerId` |
+| `bill-payment` | transactional (reference = `requestReference`) | success, failure, pending, timeout | pending, success, failed, reversed | `paymentCode`, `customerId`, `customerMobile`, `amount` |
 
-Transactions and the minimum query metadata are held in bounded TTL memory only. State resets on restart, no database or broker is used, and duplicate checks are atomic through the shared transaction store. Pending and late-event transactions transition through the shared scheduler; event-timeout transactions remain pending until state expires or is reset.
+Profile support: every profile applies to `bill-payment` (`pending-then-reversed` is reported as query status `Reversed`); `customer-validation` rejects `pending*` profiles. `timeout*` profiles close the connection without any bytes after the profile delay; the payment is recorded as configured, and `timeout-not-received` records nothing (query returns `70018`). Catalog lookups are not simulated operations and always succeed. Unknown payment codes and out-of-range amounts are rejected before any simulation and are not recorded.
+
+## Response codes
+
+| Situation | HTTP | `ResponseCode` | Grouping | Source |
+|---|---|---|---|---|
+| Success (catalog, validation, payment) | 200 | `90000` Success | `SUCCESSFUL` | Bills Payment and Airtime guides |
+| Customer validation failure | 200 | customer `90002` Customer not found; top level `90008` Validation failed | `FAILED` | Bills Payment / Airtime response-code tables |
+| Unknown payment code | 200 | `90007` Invalid payment code (customer level in validation, top level `90008`) | `FAILED` | Bills Payment / Airtime tables |
+| Amount outside product range | 200 | `90003` Invalid amount | `FAILED` | Bills Payment / Airtime tables |
+| Duplicate `requestReference` | 200 | `90005` Duplicate transaction | `FAILED` | Bills Payment / Airtime tables |
+| Payment failure | 200 | `90006` Service unavailable | `FAILED` | Bills Payment / Airtime tables |
+| Payment pending | 200 | `90009` Request in progress | `PENDING` | Response Codes (Exception / Pending; page scope: Bills Payment, Airtime & Data) |
+| Query `Completed` / `Pending` / `Failed` | 200 | `transactionResponseCode` `90000` / `90009` / `90006` | — | Query Transaction reference; guides' status tables |
+| Query `Reversed` | 200 | `transactionResponseCode` omitted | — | Guides' status tables |
+
+Rejections use the Quickteller v5 envelope `{"ResponseCode","ResponseDescription","ResponseCodeGrouping":"FAILED"}` with codes from the Response Codes page: `401` `10003` (missing `Authorization`), `401` `60003` (invalid token), `400` `20021` (missing `TerminalId`), `400` `70012` (unknown terminal, or body `TerminalId` differing from the header), `400` `10002` Invalid Request (missing/invalid fields or parameters, malformed JSON, unsupported media type), `400` `70018` Transaction Reference not found (query). Token errors use the OAuth 2.0 error body (`invalid_client`, `invalid_request`, `unsupported_grant_type`).
 
 ## Public-documentation limitations
 
-- This is an implementation of the reviewed public guide, not a claim of Interswitch certification or production catalog parity.
-- The guide's examples are internally inconsistent for the Abuja Disco product: the payment item reports `AmountType` `2` and amount `0`, while customer validation describes a minimum of `35000` kobo. The simulator follows the validation rule and accepts amounts at or above `35000`.
-- The airtime guide lists MTN with `AmountType` `2` while separately defining regular airtime as an any-amount product from ₦50 through ₦10,000. The simulator applies the stated regular-airtime range and reports `AmountType` `0` for its deterministic recharge products.
-- The public airtime catalog example shows an Airtel data-bundle product rather than a regular Airtel recharge payment code. Data bundles and invented Airtel airtime identifiers are outside this airtime-recharge implementation.
-- Real billers, products, fees, customer records, balances, and token values are not fetched from Interswitch. Responses are deterministic simulation data.
-- The public guide documents statuses `Completed`, `Pending`, `Failed`, and `Reversed`; this module produces the first three. No reversal request operation is published in the reviewed guide, so the simulator does not invent one.
-- Partner-specific network controls, certificates, credential provisioning, reconciliation, and settlement behavior are outside the public contract and are not simulated.
+- This is an implementation of the reviewed public guides, not a claim of Interswitch certification or production catalog parity.
+- The Bills Payment guide shows the payment body in camelCase in its main example and in PascalCase (`CustomerId`, `PaymentCode`, `Amount`, `RequestReference`, …) in its "Passing Additional Information" example, and its curl samples use both `/Transactions` and `/transactions`. The payment body therefore binds property names case-insensitively and both path spellings are served. Customer validation, whose fields are published in one casing only, binds exactly.
+- `90009`: the Response Codes page (scope: Bills Payment, Airtime & Data) defines it as pending "Request in progress"; the Airtime guide's table describes it as "Network error". The simulator follows the Response Codes page.
+- `90005`: the Bills Payment and Airtime tables define it as "Duplicate transaction"; the generic Response Codes page lists "Do not honor" and uses `90094` for duplicates. The simulator follows the flow-specific tables.
+- No top-level code is published for a validation response containing an invalid customer; the simulator uses `90008` Validation failed.
+- No `transactionResponseCode` is published for a reversed transaction, so it is omitted when `status` is `Reversed`. No reversal request operation is published, so none is simulated.
+- The Query Transaction reference names the nested object `billPayment`; the Bills Payment and Airtime guides use `BillPayment`. The simulator follows the guides.
+- No error body is published for authentication, terminal, validation, or not-found rejections, and the references publish only HTTP 200 and 400 (`{}`). The simulator uses the closest published envelope with Response Codes page codes, HTTP 400 for request errors, and HTTP 401 for bearer failures.
+- `TransactionRef` follows the published `PBL|Web|{TerminalId}|{ShortName}|…` pattern with the `requestReference` as the final segment; the real generation algorithm is not published. `paymentDate` uses the query sample format `M/d/yyyy h:mm:ss a` in Africa/Lagos time.
+- The Abuja Disco example reports `AmountType` `2` and amount `0` while validation describes a `35000` kobo minimum; the simulator accepts amounts at or above `35000`.
+- The Airtime guide lists MTN with `AmountType` `2` while defining regular airtime as ₦50–₦10,000; the simulator applies that range and reports `AmountType` `0`.
+- Real billers, fees, customer records, balances, and token values are deterministic simulation data. Partner network controls, certificates, reconciliation, and settlement are not simulated.
