@@ -22,11 +22,11 @@ class InMemoryTransactionStoreTest {
         MutableClock clock = new MutableClock();
         InMemoryTransactionStore store = new InMemoryTransactionStore(clock, Duration.ofMinutes(5), 10);
         store.save(transaction("nibss-nip", "same-reference", clock.instant()));
-        store.save(transaction("interswitch-transfer", "same-reference", clock.instant()));
+        store.save(transaction("interswitch", "same-reference", clock.instant()));
 
         assertThat(store.size()).isEqualTo(2);
         assertThat(store.find(new TransactionKey("nibss-nip", "same-reference"))).isPresent();
-        assertThat(store.find(new TransactionKey("interswitch-transfer", "same-reference"))).isPresent();
+        assertThat(store.find(new TransactionKey("interswitch", "same-reference"))).isPresent();
 
         store.reset();
 
@@ -94,7 +94,9 @@ class InMemoryTransactionStoreTest {
     private SimulatedTransaction transaction(String provider, String reference, Instant now) {
         return new SimulatedTransaction(
                 new TransactionKey(provider, reference),
+                "transfer",
                 new BigDecimal("100.00"),
+                java.util.Map.of(),
                 TransactionStatus.SUCCESS,
                 now,
                 now

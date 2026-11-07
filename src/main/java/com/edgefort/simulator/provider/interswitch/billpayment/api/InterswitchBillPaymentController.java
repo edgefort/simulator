@@ -8,13 +8,10 @@ import com.edgefort.simulator.provider.interswitch.billpayment.contract.Interswi
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.PaymentItemsResponse;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.PaymentRequest;
 import com.edgefort.simulator.provider.interswitch.billpayment.contract.InterswitchBillPaymentContracts.PaymentResponse;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,11 +20,17 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Quickteller Service v5 Bills Payment and Airtime. Bearer authorization and {@code TerminalId} are enforced by the
+ * provider interceptor; transaction query is served by the shared {@code GET /Transactions} handler.
+ */
 @RestController
 @RequestMapping("/quicktellerservice/api/v5")
 @Tag(name = "Interswitch Bills Payment v5", description = "Quickteller bills payment and airtime recharge operations")
 @SecurityRequirement(name = "InterswitchBearerToken")
 public class InterswitchBillPaymentController {
+
+    private static final String TERMINAL_ID = "TerminalId";
 
     private final InterswitchBillPaymentSimulationAdapter adapter;
 
@@ -35,60 +38,39 @@ public class InterswitchBillPaymentController {
         this.adapter = adapter;
     }
 
+    @Operation(summary = "Get categories")
     @GetMapping("/services/categories")
-    CategoriesResponse categories(@RequestHeader("TerminalId") String terminalId) {
+    CategoriesResponse categories() {
         return adapter.categories();
     }
 
+    @Operation(summary = "Get billers, optionally for one category")
     @GetMapping("/services")
-    BillersResponse billers(
-            @RequestHeader("TerminalId") String terminalId,
-            @RequestParam("categoryId") int categoryId
-    ) {
+    BillersResponse billers(@RequestParam(value = "categoryId", required = false) Integer categoryId) {
         return adapter.billers(categoryId);
     }
 
+    @Operation(summary = "Get payment items")
     @GetMapping("/services/options")
-    PaymentItemsResponse paymentItems(
-            @RequestHeader("TerminalId") String terminalId,
-            @RequestParam("serviceid") int serviceId
-    ) {
+    PaymentItemsResponse paymentItems(@RequestParam("serviceid") int serviceId) {
         return adapter.paymentItems(serviceId);
     }
 
+    @Operation(summary = "Validate customers")
     @PostMapping("/Transactions/validatecustomers")
     CustomerValidationResponse validateCustomers(
-            @RequestHeader("TerminalId") String terminalId,
+            @RequestHeader(TERMINAL_ID) String terminalId,
             @Valid @RequestBody CustomerValidationRequest request
     ) {
-        if (!terminalId.equals(request.TerminalId())) {
-            throw new IllegalArgumentException("TerminalId header and request body must match");
-        }
-        return adapter.validateCustomers(request);
+        return adapter.validateCustomers(request, terminalId);
     }
 
-    @PostMapping("/Transactions")
-    ResponseEntity<PaymentResponse> pay(
-            @RequestHeader("TerminalId") String terminalId,
-            @Valid @RequestBody PaymentRequest request,
-            @Parameter(
-                    description = "Simulation behavior for this request",
-                    schema = @Schema(
-                            defaultValue = "success",
-                            allowableValues = {
-                                    "success", "failure", "pending", "delayed-success",
-                                    "timeout", "event-timeout", "late-event"
-                            }
-                    )
-            )
-            @RequestHeader(value = "X-Simulation-Scenario", defaultValue = "success") String scenario
+    @Operation(summary = "Make payment (bills payment or airtime recharge)")
+    @PostMapping({"/Transactions", "/transactions"})
+    PaymentResponse pay(
+            @RequestHeader(TERMINAL_ID) String terminalId,
+            @Valid @RequestBody PaymentRequest request
     ) {
-        if (!terminalId.equals(request.TerminalId())) {
-            throw new IllegalArgumentException("TerminalId header and request body must match");
-        }
-        PaymentResponse response = adapter.pay(request, terminalId, scenario);
-        HttpStatus status = "SIMULATOR_TIMEOUT".equals(response.ResponseCode())
-                ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.OK;
-        return ResponseEntity.status(status).body(response);
+        return adapter.pay(request, terminalId);
     }
 }

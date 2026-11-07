@@ -1,29 +1,50 @@
 package com.edgefort.simulator.core.scenario;
 
+import com.edgefort.simulator.core.provider.ProviderOperation;
+import com.edgefort.simulator.core.provider.ProviderRegistry;
+
+import java.util.Optional;
+
+/**
+ * Precedence: reference override, operation override, test-data rule, operation profile, provider profile,
+ * default profile. Provider-wide selections are skipped for operations that cannot express them.
+ */
 public class DefaultScenarioResolver implements ScenarioResolver {
 
-    private final ActiveProfileRegistry profileRegistry;
-    private final InMemoryScenarioOverrideStore overrideStore;
+    private final ProfileCatalog catalog;
+    private final ProfileAssignments assignments;
+    private final ScenarioOverrideStore overrides;
+    private final ScenarioRuleStore rules;
+    private final ProviderRegistry registry;
 
     public DefaultScenarioResolver(
-            ActiveProfileRegistry profileRegistry,
-            InMemoryScenarioOverrideStore overrideStore
+            ProfileCatalog catalog,
+            ProfileAssignments assignments,
+            ScenarioOverrideStore overrides,
+            ScenarioRuleStore rules,
+            ProviderRegistry registry
     ) {
-        this.profileRegistry = profileRegistry;
-        this.overrideStore = overrideStore;
+        this.catalog = catalog;
+        this.assignments = assignments;
+        this.overrides = overrides;
+        this.rules = rules;
+        this.registry = registry;
     }
 
     @Override
-    public SimulationBehavior resolve(ScenarioQuery query) {
-        return overrideStore.consume(query.provider(), query.reference())
-                .map(profileRegistry::behaviorFor)
-                .orElseGet(() -> resolveWithoutOverride(query));
+    public ResolvedBehavior resolve(ScenarioQuery query) {
+        ProviderOperation operation = registry.operation(query.provider(), query.operation());
+        return overrides.consume(query)
+                .or(() -> rules.match(query)
+                        .map(behavior -> new ResolvedBehavior(behavior, ScenarioSource.RULE)))
+                .or(() -> assignments.operationProfile(query.provider(), query.operation())
+                        .map(profile -> new ResolvedBehavior(catalog.get(profile), ScenarioSource.OPERATION_PROFILE)))
+                .or(() -> supported(operation, assignments.providerProfile(query.provider()))
+                        .map(behavior -> new ResolvedBehavior(behavior, ScenarioSource.PROVIDER_PROFILE)))
+                .orElseGet(() -> new ResolvedBehavior(catalog.defaultBehavior(), ScenarioSource.DEFAULT_PROFILE));
     }
 
-    private SimulationBehavior resolveWithoutOverride(ScenarioQuery query) {
-        if (query.requestedScenario() != null && !query.requestedScenario().isBlank()) {
-            return profileRegistry.behaviorFor(SimulationScenario.fromExternalValue(query.requestedScenario()));
-        }
-        return profileRegistry.activeBehavior();
+    private Optional<SimulationBehavior> supported(ProviderOperation operation, Optional<String> profile) {
+        return profile.map(catalog::get).filter(behavior -> operation.unsupportedReason(behavior).isEmpty());
     }
 }

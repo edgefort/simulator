@@ -1,7 +1,7 @@
 package com.edgefort.simulator.provider.interswitch.billpayment.contract;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
@@ -103,6 +103,7 @@ public final class InterswitchBillPaymentContracts {
     public record CustomerToValidate(
             @NotBlank String PaymentCode,
             @NotBlank String CustomerId,
+            String Amount,
             boolean WithDetails
     ) {
     }
@@ -139,13 +140,21 @@ public final class InterswitchBillPaymentContracts {
     ) {
     }
 
+    /**
+     * Make Payment request. The Bills Payment guide publishes the fields in camelCase in its main example and in
+     * PascalCase in its "Passing Additional Information" example, so property names bind case-insensitively.
+     * {@code TerminalId} appears in the Airtime guide body only and is therefore optional.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
     public record PaymentRequest(
-            @NotBlank String TerminalId,
+            String TerminalId,
             @NotBlank String paymentCode,
             @NotBlank String customerId,
             @NotBlank String customerMobile,
             String customerEmail,
+            String customerName,
             @NotNull @DecimalMin("0.01") BigDecimal amount,
+            String additionalInfo,
             @NotBlank @Size(max = 20) String requestReference
     ) {
     }
@@ -164,18 +173,37 @@ public final class InterswitchBillPaymentContracts {
     ) {
     }
 
+    /**
+     * Query Transaction response as published by the Bills Payment and Airtime guides.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record TransactionQueryResponse(
-            String requestReference,
-            @JsonProperty("transactionRef") String transactionReference,
-            String serviceCode,
-            String customerId,
+            BillPaymentDetails BillPayment,
             String amount,
+            String currencyCode,
+            String customer,
+            String customerEmail,
+            String customerMobile,
+            String paymentDate,
+            String requestReference,
+            String serviceCode,
+            String serviceName,
+            String serviceProviderId,
             String status,
+            String surcharge,
+            String transactionRef,
             String transactionResponseCode,
-            String transactionResponseMessage,
-            String transactionSet,
-            String RechargePIN
+            String transactionSet
+    ) {
+    }
+
+    public record BillPaymentDetails(
+            String biller,
+            String customerId1,
+            String customerId2,
+            String paymentTypeName,
+            String paymentTypeCode,
+            String billerId
     ) {
     }
 }
