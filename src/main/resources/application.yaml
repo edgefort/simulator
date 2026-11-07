@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: simulator
+  mvc:
+    # PUT/PATCH/DELETE bodies are never form parameters here; parsing them would reject or corrupt binary uploads
+    # such as PGP keys sent with a client's default form content type.
+    formcontent:
+      filter:
+        enabled: false
 
 management:
   endpoints:
@@ -71,9 +77,22 @@ simulator:
   providers:
     nibss-nip:
       enabled: true
-      specification-version: NIP v9.4
-      security-mode: not-configured-wsdl-security-not-supplied
+      specification-version: NIP v9.5 SOAP web service with SSM message security (messages 010-023)
+      security-mode: ssm-pgp
       base-path: ${NIBSS_NIP_BASE_PATH:}
+      config:
+        # Base64 of an OpenPGP secret key ring (armored or binary). Empty: a key pair is generated on startup.
+        simulator-private-key: ${NIBSS_NIP_SIMULATOR_PRIVATE_KEY:}
+        simulator-private-key-passphrase: ${NIBSS_NIP_SIMULATOR_PRIVATE_KEY_PASSPHRASE:}
+        # Base64 of the institution's OpenPGP public key ring. Empty: upload it through the admin API.
+        client-public-key: ${NIBSS_NIP_CLIENT_PUBLIC_KEY:}
+        inward:
+          url: ${NIBSS_NIP_INWARD_URL:}
+          namespace: ${NIBSS_NIP_INWARD_NAMESPACE:http://core.nip.nibss/}
+          request-element: ${NIBSS_NIP_INWARD_REQUEST_ELEMENT:request}
+          soap-action: ${NIBSS_NIP_INWARD_SOAP_ACTION:}
+          timeout: ${NIBSS_NIP_INWARD_TIMEOUT:30s}
+          source-institution-code: ${NIBSS_NIP_INWARD_SOURCE_INSTITUTION_CODE:999999}
     interswitch:
       enabled: true
       specification-version: Quickteller Service API v5 public documentation (Send Money, Bills Payment and Airtime)

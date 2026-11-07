@@ -39,8 +39,8 @@ import static com.edgefort.simulator.provider.nibss.nip.contract.NibssNipRespons
 import static com.edgefort.simulator.provider.nibss.nip.contract.NibssNipResponseCodes.UNABLE_TO_LOCATE_RECORD;
 
 /**
- * Maps NIP v9.4 messages to the provider-neutral simulation core. {@code SessionID} is the transaction reference;
- * simulation attributes use the NIP element names.
+ * Maps NIP messages 010-023, from either transport, to the provider-neutral simulation core. {@code SessionID} is
+ * the transaction reference; simulation attributes use the NIP element names.
  */
 @Service
 public class NibssNipSimulationAdapter {
@@ -252,7 +252,7 @@ public class NibssNipSimulationAdapter {
         return statusResponseCode(result.transaction().status());
     }
 
-    private String statusResponseCode(TransactionStatus status) {
+    static String statusResponseCode(TransactionStatus status) {
         return switch (status) {
             case SUCCESS -> APPROVED;
             case PENDING -> REQUEST_PROCESSING_IN_PROGRESS;

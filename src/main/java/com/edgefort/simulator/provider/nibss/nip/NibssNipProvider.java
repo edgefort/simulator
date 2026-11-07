@@ -10,12 +10,17 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * NIBSS NIP v9.4 operations and what their documented response codes can express.
+ * NIBSS NIP operations and what their documented response codes can express.
  *
  * <p>Transfers are transactional and observed through the transaction status query (016/017), which reports
  * {@code 00}, {@code 09}, or {@code 96}. NIP has no documented status-query code for a reversed transaction, so
  * {@link TransactionStatus#REVERSED} is not declared. Enquiries and advices keep no state and have no processing
  * code, so they cannot be pending.</p>
+ *
+ * <p>{@value #INWARD_DIRECT_CREDIT_TRANSFER} is the direct credit the simulator, playing NIBSS, sends to an
+ * institution. Its behavior decides what the institution's later status query observes: success ({@code 00}),
+ * failure ({@code 96}: NIBSS did not accept the institution's response, so the institution must not credit), or
+ * pending ({@code 09}, then the profile's final status). The admin call is never dropped, so it has no timeout.</p>
  */
 @Component
 public class NibssNipProvider implements SimulatedProvider {
@@ -28,6 +33,7 @@ public class NibssNipProvider implements SimulatedProvider {
     public static final String BALANCE_ENQUIRY = "balance-enquiry";
     public static final String DIRECT_CREDIT_ADVICE = "fund-transfer-advice-direct-credit";
     public static final String DIRECT_DEBIT_ADVICE = "fund-transfer-advice-direct-debit";
+    public static final String INWARD_DIRECT_CREDIT_TRANSFER = "inward-fund-transfer-direct-credit";
 
     private static final Set<String> CREDIT_MATCH_FIELDS = Set.of(
             "DestinationInstitutionCode",
@@ -85,6 +91,12 @@ public class NibssNipProvider implements SimulatedProvider {
                     DIRECT_DEBIT_ADVICE,
                     DEBIT_MATCH_FIELDS,
                     SimulationOutcome.SUCCESS, SimulationOutcome.FAILURE, SimulationOutcome.TIMEOUT
+            ),
+            ProviderOperation.transactional(
+                    INWARD_DIRECT_CREDIT_TRANSFER,
+                    CREDIT_MATCH_FIELDS,
+                    Set.of(SimulationOutcome.SUCCESS, SimulationOutcome.FAILURE, SimulationOutcome.PENDING),
+                    STATUS_QUERY_STATUSES
             )
     );
 
